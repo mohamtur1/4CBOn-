@@ -368,378 +368,6 @@ export default function App() {
       setIdentity(newIdent); saveIdentity(newIdent);
 
     } catch (e) {
-      if (e.name === "Ab
-Reply with ONLY a single integer 0-100. Nothing else.`;
-
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-request-forwarding": "true" },
-      body: JSON.stringify({
-        model: MODEL_SCORER,
-        max_tokens: 10,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    if (!res.ok) return 50;
-    const data = await res.json();
-    const num = parseInt((data?.content?.[0]?.text || "50").replace(/\D/g, ""), 10);
-    return isNaN(num) ? 50 : Math.min(100, Math.max(0, num));
-  } catch { return 50; }
-}
-
-// ═══════════════════════════════════════════════════════════
-// STREAMING API CALL
-// ═══════════════════════════════════════════════════════════
-async function callClaude(layerId, layerName, userPrompt, apiKey, onChunk, signal, maxTokens = 800) {
-  const system = `${RUNTIME_SPEC}\n\nYOU ARE NOW EXECUTING: ${layerId} — ${layerName}\nStay in this layer only. Be concise and precise.`;
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-request-forwarding": "true",
-    },
-    body: JSON.stringify({
-      model: MODEL_PIPELINE,
-      max_tokens: maxTokens,
-      stream: true,
-      system,
-      messages: [{ role: "user", content: userPrompt.slice(0, 2000) }],
-    }),
-  });
-
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}));
-    throw new Error(e?.error?.message || `API error ${res.status}`);
-  }
-
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let full = "", buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += dec.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop();
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const raw = line.slice(6).trim();
-      if (raw === "[DONE]") continue;
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
-          const chunk = parsed.delta.text || "";
-          if (chunk) { full += chunk; onChunk(full); }
-        }
-      } catch {}
-    }
-  }
-  return full;
-}
-
-// ═══════════════════════════════════════════════════════════
-// PERSISTENCE
-// ═══════════════════════════════════════════════════════════
-function loadApiKey() {
-  try { return localStorage.getItem("4cbon_apikey") || ""; } catch { return ""; }
-}
-function saveApiKey(k) {
-  try { localStorage.setItem("4cbon_apikey", k); } catch {}
-}
-function loadIdentity() {
-  try { return JSON.parse(localStorage.getItem("4cbon_identity") || "null") || { totalRuns: 0, beliefs: [] }; }
-  catch { return { totalRuns: 0, beliefs: [] }; }
-}
-function saveIdentity(id) {
-  try { localStorage.setItem("4cbon_identity", JSON.stringify(id)); } catch {}
-}
-
-// ═══════════════════════════════════════════════════════════
-// SCORE BAR
-// ═══════════════════════════════════════════════════════════
-function ScoreBar({ before, after, scoring }) {
-  if (before === null) return null;
-
-  if (scoring) {
-    return (
-      <div style={{ margin: "20px 0", padding: "16px", background: "#0a0a14", border: "1px solid #1a1a2e", borderRadius: 8 }}>
-        <div style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", marginBottom: 10, fontFamily: "monospace" }}>SCORE TRAJECTORY · Claude-judged</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 24, color: "#f59e0b", minWidth: 32 }}>{before}</span>
-          <div style={{ flex: 1, height: 6, background: "#111", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${before}%`, background: "#f59e0b", borderRadius: 3 }} />
-          </div>
-          <span style={{ color: "#333", fontSize: 18 }}>→</span>
-          <div style={{ flex: 1, height: 6, background: "#1a1a2e", borderRadius: 3 }} />
-          <span style={{ fontFamily: "monospace", fontSize: 14, color: "#f59e0b", minWidth: 32 }}>…</span>
-        </div>
-        <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 6, fontFamily: "monospace" }}>scoring rewrite...</div>
-      </div>
-    );
-  }
-
-  if (after === null) {
-    return (
-      <div style={{ margin: "20px 0", padding: "16px", background: "#0a0a14", border: "1px solid #1a1a2e", borderRadius: 8 }}>
-        <div style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", marginBottom: 10, fontFamily: "monospace" }}>SCORE TRAJECTORY · Claude-judged</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 24, color: "#f59e0b", minWidth: 32 }}>{before}</span>
-          <div style={{ flex: 1, height: 6, background: "#111", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${before}%`, background: "#f59e0b", borderRadius: 3 }} />
-          </div>
-          <span style={{ color: "#333", fontSize: 18 }}>→</span>
-          <div style={{ flex: 1, height: 6, background: "#1a1a2e", borderRadius: 3 }} />
-          <span style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 24, color: "#333", minWidth: 32 }}>?</span>
-        </div>
-        <div style={{ fontSize: 10, color: "#444", marginTop: 6, fontFamily: "monospace" }}>pipeline running...</div>
-      </div>
-    );
-  }
-
-  const delta = after - before;
-  const color = delta > 0 ? "#10b981" : delta === 0 ? "#f59e0b" : "#ef4444";
-  const label = delta > 0 ? `+${delta} improvement` : delta === 0 ? "no change" : `${delta} regression`;
-
-  return (
-    <div style={{ margin: "20px 0", padding: "16px", background: "#0a0a14", border: "1px solid #1a1a2e", borderRadius: 8 }}>
-      <div style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", marginBottom: 10, fontFamily: "monospace" }}>SCORE TRAJECTORY · Claude-judged</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 24, color: "#f59e0b", minWidth: 32 }}>{before}</span>
-        <div style={{ flex: 1, height: 6, background: "#111", borderRadius: 3, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${before}%`, background: "#f59e0b", borderRadius: 3 }} />
-        </div>
-        <span style={{ color, fontSize: 18 }}>→</span>
-        <div style={{ flex: 1, height: 6, background: "#111", borderRadius: 3, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${after}%`, background: color, borderRadius: 3, transition: "width 0.8s ease" }} />
-        </div>
-        <span style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 24, color, minWidth: 32 }}>{after}</span>
-      </div>
-      <div style={{ fontSize: 10, color, marginTop: 6, fontFamily: "monospace", fontWeight: 700 }}>{label}</div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-// LAYER CARD
-// ═══════════════════════════════════════════════════════════
-function LayerCard({ layer, content, streaming }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(content).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
-  };
-  if (!content && !streaming) return null;
-  return (
-    <div style={{
-      margin: layer.final ? "24px 0" : "12px 0",
-      background: layer.final ? `${layer.color}0d` : "#08080f",
-      border: `1px solid ${layer.color}${layer.final ? "55" : "22"}`,
-      borderLeft: `3px solid ${layer.color}`,
-      borderRadius: 8, padding: "14px 16px",
-      animation: "rise 0.4s ease both",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: layer.final ? 16 : 12, color: layer.color }}>{layer.emoji}</span>
-          <div>
-            <span style={{ fontFamily: "monospace", fontSize: layer.final ? 12 : 9, fontWeight: 900, color: layer.color, letterSpacing: "0.1em" }}>{layer.id}</span>
-            <span style={{ fontFamily: "monospace", fontSize: 9, color: "#444", marginLeft: 6, letterSpacing: "0.08em" }}>— {layer.name}{layer.final ? " ★ FINAL REWRITE" : ""}</span>
-          </div>
-        </div>
-        {content && !streaming && (
-          <button onClick={copy} style={{
-            background: copied ? `${layer.color}22` : "transparent",
-            border: `1px solid ${layer.color}33`, borderRadius: 4,
-            color: copied ? layer.color : "#444", fontFamily: "monospace",
-            fontSize: 9, padding: "4px 10px", cursor: "pointer",
-            transition: "all 0.2s", letterSpacing: "0.1em",
-          }}>
-            {copied ? "✓ COPIED" : "COPY"}
-          </button>
-        )}
-      </div>
-      <div style={{
-        fontSize: layer.final ? 14 : 12, lineHeight: 1.8,
-        color: layer.final ? "#e8e8f8" : "#9898b8",
-        fontFamily: layer.final ? "'Georgia', serif" : "monospace",
-        whiteSpace: "pre-wrap",
-      }}>
-        {content || ""}
-        {streaming && (
-          <span style={{ display: "inline-block", width: 6, height: 13, background: layer.color, marginLeft: 2, verticalAlign: "middle", animation: "pulse 0.7s infinite" }} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-// PIPELINE BAR
-// ═══════════════════════════════════════════════════════════
-function PipelineBar({ activeLayer, completedLayers }) {
-  return (
-    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", margin: "16px 0" }}>
-      {LAYERS.map(l => {
-        const done = completedLayers.includes(l.id);
-        const active = activeLayer === l.id;
-        return (
-          <div key={l.id} style={{
-            fontFamily: "monospace", fontSize: 9, fontWeight: 700,
-            padding: "4px 8px", borderRadius: 4,
-            background: done ? `${l.color}22` : active ? `${l.color}15` : "transparent",
-            border: `1px solid ${done ? l.color : active ? l.color : "#1a1a2e"}`,
-            color: done ? l.color : active ? l.color : "#333",
-            transition: "all 0.3s",
-            boxShadow: active ? `0 0 8px ${l.color}44` : "none",
-          }}>
-            {done ? "✓" : active ? "⟳" : "·"} {l.id}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-// API KEY INPUT
-// ═══════════════════════════════════════════════════════════
-function ApiKeyInput({ apiKey, setApiKey, locked }) {
-  const [show, setShow] = useState(false);
-  const [saved, setSaved] = useState(!!apiKey);
-
-  const handleSave = (val) => {
-    saveApiKey(val);
-    setSaved(true);
-  };
-
-  return (
-    <div style={{ marginBottom: 20, padding: "14px 16px", background: "#06060f", border: "1px solid #1a1a2e", borderRadius: 8 }}>
-      <div style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", marginBottom: 8 }}>
-        ANTHROPIC API KEY · <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: "#ff6b35", textDecoration: "none" }}>console.anthropic.com</a>
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input
-          type={show ? "text" : "password"}
-          value={apiKey}
-          onChange={e => { setApiKey(e.target.value); setSaved(false); }}
-          disabled={locked}
-          placeholder="sk-ant-..."
-          style={{
-            flex: 1, background: "#08080f", border: `1px solid ${saved ? "#10b98133" : "#1a1a2e"}`,
-            borderRadius: 6, color: "#c0c0e0", fontFamily: "monospace",
-            fontSize: 12, padding: "8px 12px", transition: "border-color 0.2s",
-          }}
-        />
-        <button
-          onClick={() => setShow(!show)}
-          style={{ background: "transparent", border: "1px solid #1a1a2e", borderRadius: 6, color: "#444", fontFamily: "monospace", fontSize: 10, padding: "8px 10px" }}
-        >
-          {show ? "hide" : "show"}
-        </button>
-        <button
-          onClick={() => handleSave(apiKey)}
-          disabled={!apiKey || locked}
-          style={{
-            background: apiKey && !locked ? "#10b98122" : "transparent",
-            border: `1px solid ${apiKey && !locked ? "#10b981" : "#1a1a2e"}`,
-            borderRadius: 6, color: apiKey && !locked ? "#10b981" : "#333",
-            fontFamily: "monospace", fontSize: 10, padding: "8px 12px", transition: "all 0.2s",
-          }}
-        >
-          {saved ? "✓ saved" : "save"}
-        </button>
-      </div>
-      <div style={{ fontSize: 9, color: "#333", marginTop: 6 }}>
-        Stored in your browser only. Never sent anywhere except Anthropic's API.
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-// MAIN APP
-// ═══════════════════════════════════════════════════════════
-export default function App() {
-  const [apiKey, setApiKey]            = useState(loadApiKey());
-  const [answer, setAnswer]            = useState("");
-  const [context, setContext]          = useState("");
-  const [running, setRunning]          = useState(false);
-  const [activeLayer, setActive]       = useState(null);
-  const [completedLayers, setDone]     = useState([]);
-  const [layerOutputs, setOutputs]     = useState({});
-  const [streamingLayer, setStreaming] = useState(null);
-  const [scoreBefore, setScoreBefore]  = useState(null);
-  const [scoreAfter, setScoreAfter]    = useState(null);
-  const [scoring, setScoring]          = useState(false);
-  const [error, setError]              = useState("");
-  const [identity, setIdentity]        = useState(loadIdentity());
-  const [showIdentity, setShowIdent]   = useState(false);
-  const abortCtrl = useRef(null);
-  const bottom = useRef(null);
-
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [layerOutputs, activeLayer, scoring]);
-
-  const setLayerOutput = (id, text) => setOutputs(prev => ({ ...prev, [id]: text }));
-  const markDone = (id) => { setDone(prev => [...prev, id]); setActive(null); setStreaming(null); };
-
-  const runLayer = async (layerId, prompt, signal, maxTokens = 800) => {
-    const layer = LAYERS.find(l => l.id === layerId);
-    setActive(layerId); setStreaming(layerId);
-    let result = "";
-    await callClaude(layerId, layer.name, prompt, apiKey, (text) => {
-      result = text; setLayerOutput(layerId, text);
-    }, signal, maxTokens);
-    markDone(layerId);
-    return result;
-  };
-
-  const run = async () => {
-    if (!answer.trim()) return;
-    if (!apiKey.trim()) { setError("Please enter your Anthropic API key above."); return; }
-
-    abortCtrl.current = new AbortController();
-    const { signal } = abortCtrl.current;
-    setRunning(true); setError(""); setOutputs({}); setDone([]);
-    setActive(null); setStreaming(null); setScoreBefore(null); setScoreAfter(null); setScoring(false);
-
-    try {
-      const s0 = await scoreWithClaude(answer, apiKey);
-      setScoreBefore(s0);
-
-      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(answer, context), signal);       if (signal.aborted) return;
-      const p  = await runLayer("P",  LAYER_PROMPTS.P(answer, l0), signal);             if (signal.aborted) return;
-      const w  = await runLayer("W",  LAYER_PROMPTS.W(answer), signal);                 if (signal.aborted) return;
-      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(answer, p, w), signal);         if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                   if (signal.aborted) return;
-      const l3 = await runLayer("L3", LAYER_PROMPTS.L3(answer, l2, w), signal);        if (signal.aborted) return;
-      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(answer, l3, w), signal, 1200);  if (signal.aborted) return;
-
-      setScoring(true);
-      const s1 = await scoreWithClaude(l4, apiKey);
-      setScoring(false);
-      setScoreAfter(s1);
-
-      const gapsFixed = s1 > s0 ? ["clarity", "structure", "depth"] : [];
-
-      const lr = await runLayer("LR", LAYER_PROMPTS.LR(answer, l4, s0, s1), signal);   if (signal.aborted) return;
-      const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);    if (signal.aborted) return;
-      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);         if (signal.aborted) return;
-      await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);               if (signal.aborted) return;
-
-      const newIdent = {
-        ...identity, totalRuns: identity.totalRuns + 1,
-        beliefs: [...(identity.beliefs || []).slice(-4), `Run #${identity.totalRuns + 1}: ${s0}→${s1}`],
-      };
-      setIdentity(newIdent); saveIdentity(newIdent);
-
-    } catch (e) {
       if (e.name === "AbortError") return;
       setError(e.message);
     } finally {
@@ -764,7 +392,6 @@ export default function App() {
         button { cursor: pointer; }
       `}</style>
 
-      {/* HEADER */}
       <div style={{ borderBottom: "1px solid #0f0f1e", padding: "20px 20px 16px", background: "#05050e" }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -772,11 +399,11 @@ export default function App() {
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(22px,5vw,32px)", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, background: "linear-gradient(110deg,#ff6b35,#00d4ff,#10b981)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
                 4CBON
               </div>
-              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 11 LAYERS · HAIKU</div>
+              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 11 LAYERS</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "#10b981", fontWeight: 700 }}>unlimited runs</div>
-              <div style={{ fontSize: 8, color: "#333", marginTop: 2 }}>your API key</div>
+              <div style={{ fontSize: 8, color: "#333", marginTop: 2 }}>free to use</div>
               <div style={{ fontSize: 8, color: "#ff6b35", marginTop: 4, letterSpacing: "0.1em", cursor: "pointer", textDecoration: "underline" }} onClick={() => setShowIdent(!showIdentity)}>
                 {showIdentity ? "hide" : "identity"} · run #{identity.totalRuns}
               </div>
@@ -785,7 +412,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* IDENTITY */}
       {showIdentity && (
         <div style={{ background: "#06060f", borderBottom: "1px solid #0f0f1e", padding: "12px 20px" }}>
           <div style={{ maxWidth: 720, margin: "0 auto", fontSize: 11, color: "#5a5a82", lineHeight: 1.8 }}>
@@ -796,20 +422,15 @@ export default function App() {
         </div>
       )}
 
-      {/* MAIN */}
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px" }}>
 
-        {/* API KEY */}
-        <ApiKeyInput apiKey={apiKey} setApiKey={setApiKey} locked={running} />
-
-        {/* INPUT */}
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", display: "block", marginBottom: 6 }}>PASTE AI ANSWER</label>
           <textarea
             value={answer} onChange={e => setAnswer(e.target.value)} disabled={running}
             placeholder="Paste any AI-generated answer here. The pipeline runs it through all 11 layers."
             rows={6}
-            style={{ width: "100%", background: "#08080f", border: "1px solid #111120", borderRadius: 6, color: "#c0c0e0", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, padding: "12px 14px", lineHeight: 1.7, transition: "border-color 0.2s" }}
+            style={{ width: "100%", background: "#08080f", border: "1px solid #111120", borderRadius: 6, color: "#c0c0e0", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, padding: "12px 14px", lineHeight: 1.7 }}
             onFocus={e => e.target.style.borderColor = "#ff6b35"}
             onBlur={e => e.target.style.borderColor = "#111120"}
           />
@@ -820,16 +441,16 @@ export default function App() {
           <input
             value={context} onChange={e => setContext(e.target.value)} disabled={running}
             placeholder="What should this answer achieve? (leave blank to auto-detect)"
-            style={{ width: "100%", background: "#08080f", border: "1px solid #111120", borderRadius: 6, color: "#c0c0e0", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, padding: "10px 14px", transition: "border-color 0.2s" }}
+            style={{ width: "100%", background: "#08080f", border: "1px solid #111120", borderRadius: 6, color: "#c0c0e0", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, padding: "10px 14px" }}
             onFocus={e => e.target.style.borderColor = "#ff6b35"}
             onBlur={e => e.target.style.borderColor = "#111120"}
           />
         </div>
 
         <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-          <button onClick={run} disabled={running || !answer.trim() || !apiKey.trim()}
-            style={{ flex: 1, background: running ? "#0a0a14" : !apiKey.trim() ? "#0a0a14" : "linear-gradient(135deg,#ff6b35,#00d4ff)", border: `1px solid ${running || !apiKey.trim() ? "#1a1a2e" : "#ff6b3544"}`, borderRadius: 6, color: running || !apiKey.trim() ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 12, padding: "12px", letterSpacing: "0.1em", transition: "all 0.2s" }}>
-            {running ? "⟳ RUNNING PIPELINE..." : !apiKey.trim() ? "ENTER API KEY ABOVE" : "▶  RUN PIPELINE"}
+          <button onClick={run} disabled={running || !answer.trim()}
+            style={{ flex: 1, background: running ? "#0a0a14" : "linear-gradient(135deg,#ff6b35,#00d4ff)", border: `1px solid ${running ? "#1a1a2e" : "#ff6b3544"}`, borderRadius: 6, color: running ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 12, padding: "12px", letterSpacing: "0.1em" }}>
+            {running ? "⟳ RUNNING PIPELINE..." : "▶  RUN PIPELINE"}
           </button>
           {running && (
             <button onClick={stop} style={{ background: "transparent", border: "1px solid #ef444433", borderRadius: 6, color: "#ef4444", fontFamily: "'JetBrains Mono',monospace", fontSize: 12, padding: "12px 16px" }}>✕ STOP</button>
