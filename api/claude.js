@@ -1,24 +1,23 @@
-const ALLOWED_ORIGINS = [
-  "https://4cbon.vercel.app",
-  "https://4-cb-on.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
+const isAllowedOrigin = (o) => {
+  if (!o) return false;
+  if (o === "https://4cbon.vercel.app") return true;
+  if (o === "https://4-cb-on.vercel.app") return true;
+  if (o === "http://localhost:3000") return true;
+  if (o === "http://localhost:5173") return true;
+  if (/^https:\/\/4cbon-[a-z0-9-]+\.vercel\.app$/.test(o)) return true;
+  return false;
+};
 
-function setCorsHeaders(req, res) {
+export default async function handler(req, res) {
   const origin = req.headers.origin;
-  if (ALLOWED_ORIGINS.includes(origin)) {
+
+  if (isAllowedOrigin(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
   }
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Max-Age", "86400");
-}
 
-export default async function handler(req, res) {
-  setCorsHeaders(req, res);
-
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     res.status(204).end();
     return;
@@ -29,10 +28,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Block requests from unlisted origins
-  const origin = req.headers.origin;
-  if (origin && !ALLOWED_ORIGINS.includes(origin)) {
-    res.status(403).json({ error: "Origin not allowed" });
+  if (!isAllowedOrigin(origin)) {
+    res.status(403).json({ error: "Forbidden origin", origin });
     return;
   }
 
