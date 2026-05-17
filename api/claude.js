@@ -160,6 +160,48 @@ export default async function handler(req, res) {
     return;
   }
 
+
+  // Credibility parser — reads Factual critiques with confidence ≥3
+  // that haven't been injected yet. These get prepended to the W layer prompt.
+  if (req.body && req.body._action === "get_validated_critiques") {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+    try {
+      const response = await fetch(
+        `${supabaseUrl}/rest/v1/feedback?critique_type=eq.Factual&confidence=gte.3&injected=eq.false&order=created_at.asc&limit=5`,
+        { headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` } }
+      );
+      const critiques = await response.json();
+      res.status(200).json({ critiques: Array.isArray(critiques) ? critiques : [] });
+    } catch { res.status(200).json({ critiques: [] }); }
+    return;
+  }
+
+  // Mark critiques as injected after they've been used in a run.
+  // Each critique trains the system once, then is retired.
+  if (req.body && req.body._action === "mark_critiques_injected") {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+    const { ids } = req.body;
+    if (!ids || ids.length === 0) { res.status(200).json({ marked: 0 }); return; }
+    try {
+      // Update each critique row to set injected=true
+      await Promise.all(ids.map(id =>
+        fetch(`${supabaseUrl}/rest/v1/feedback?id=eq.${id}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Prefer": "return=minimal",
+          },
+          body: JSON.stringify({ injected: true }),
+        })
+      ));
+      res.status(200).json({ marked: ids.length });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    return;
+}
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
