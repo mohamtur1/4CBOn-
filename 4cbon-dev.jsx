@@ -173,7 +173,12 @@ const LAYER_PROMPTS = {
     return `${ctx ? `Context/Goal: ${ctx}\n\n` : ""}${beliefContext}${questionContext}AI ANSWER:\n${answer}\n\nYou are L0 — Interpretation Engine. Identify: task type, intent, constraints, ambiguities. Define what an excellent version of this answer looks like. Be specific.`;
   },
   P:  (answer, l0)   => `AI ANSWER:\n${answer}\n\nL0 Interpretation:\n${l0}\n\nYou are P — Parsing Layer. Break the answer into logical units. List: (1) claims made, (2) structure used, (3) what is missing, (4) what is weak.`,
-  W:  (answer)       => `AI ANSWER:\n${answer}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable.`,
+  W:  (answer, validatedCritiques) => {
+    const critiqueContext = validatedCritiques && validatedCritiques.length > 0
+      ? `\n\nVALIDATED EXTERNAL CRITIQUES (human-submitted, confidence ≥3, Factual type — treat as grounded prior knowledge when extracting world model):\n${validatedCritiques.map(c => `· ${c.evidence}${c.suggested_correction ? ` → Correction: ${c.suggested_correction}` : ""}`).join("\n")}\n`
+      : "";
+    return `AI ANSWER:\n${answer}${critiqueContext}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable. If validated external critiques are present above, treat them as HIGH certainty grounded facts when they contradict claims in the answer.`;
+  },
   L1: (answer, p, w) => `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses:\nH1: [strongest improvement path]\nH2: [radical reframe — question whether the framing of the answer itself is the problem, not just the content]\nH3: [failure mode — what could go wrong if used as-is]`,
   L2: (l1)           => `Hypotheses:\n${l1}\n\nYou are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`,
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
@@ -286,7 +291,39 @@ async function saveFeedbackToSupabase(evidence, confidence, critiqueType, sugges
 }
 
 // ═══════════════════════════════════════════════════════════
-// SCORER — 3-call median eliminates single-call variance
+// CREDIBILITY PARSER — the bridge between external ground truth
+// and the pipeline's world model layer.
+//
+// Before each run, this reads Supabase for any Factual critiques
+// with confidence ≥ 3 that haven't been injected yet. It returns
+// them to be prepended to the W layer prompt as validated context.
+// After the run, it marks those rows as injected so they don't
+// repeat on every future run — each critique is used once, then
+// becomes part of the system's accumulated knowledge.
+// ═══════════════════════════════════════════════════════════
+async function loadValidatedCritiques() {
+  try {
+    const res = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ _action: "get_validated_critiques" }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.critiques || [];
+  } catch { return []; }
+}
+
+async function markCritiquesInjected(critiqueIds) {
+  if (!critiqueIds || critiqueIds.length === 0) return;
+  try {
+    await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ _action: "mark_critiques_injected", ids: critiqueIds }),
+    });
+  } catch {} // fail silently
+}
 // ═══════════════════════════════════════════════════════════
 async function scoreSingle(text, originalScore = null) {
   const prompt = originalScore !== null
@@ -727,15 +764,17 @@ export default function App() {
     setScoring(false); setMemoryStatus(""); setShowFeedback(false);
 
     try {
-      const [priorBeliefs, priorQuestions] = await Promise.all([
+      const [priorBeliefs, priorQuestions, validatedCritiques] = await Promise.all([
         loadBeliefsFromSupabase(),
         loadRecentQuestionsFromSupabase(),
+        loadValidatedCritiques(),
       ]);
 
-      if (priorBeliefs.length > 0 || priorQuestions.length > 0) {
+      if (priorBeliefs.length > 0 || priorQuestions.length > 0 || validatedCritiques.length > 0) {
         const parts = [];
         if (priorBeliefs.length > 0) parts.push(`${priorBeliefs.length} belief${priorBeliefs.length > 1 ? "s" : ""}`);
         if (priorQuestions.length > 0) parts.push(`${priorQuestions.length} question${priorQuestions.length > 1 ? "s" : ""}`);
+        if (validatedCritiques.length > 0) parts.push(`${validatedCritiques.length} critique${validatedCritiques.length > 1 ? "s" : ""}`);
         setMemoryStatus(`↑ ${parts.join(" + ")} loaded`);
       }
 
@@ -746,7 +785,7 @@ export default function App() {
       if (signal.aborted) return;
 
       const p  = await runLayer("P",  LAYER_PROMPTS.P(inputText, l0), signal);              if (signal.aborted) return;
-      const w  = await runLayer("W",  LAYER_PROMPTS.W(inputText), signal);                   if (signal.aborted) return;
+      const w  = await runLayer("W",  LAYER_PROMPTS.W(inputText, validatedCritiques), signal);                   if (signal.aborted) return;
       const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w), signal);           if (signal.aborted) return;
       const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
@@ -782,7 +821,12 @@ export default function App() {
         setMemoryStatus("✓ belief saved to memory");
       }
 
-      // Update local backup
+      // Mark validated critiques as injected so they don't repeat on future runs.
+      // Each critique trains the system once, then becomes part of its accumulated knowledge.
+      if (validatedCritiques.length > 0) {
+        const ids = validatedCritiques.map(c => c.id).filter(Boolean);
+        await markCritiquesInjected(ids);
+      }
       const newIdent = {
         ...identity, totalRuns: newRunNumber,
         beliefs: [...(identity.beliefs || []).slice(-4), `Run #${newRunNumber}: ${s0}→${s1}`],
