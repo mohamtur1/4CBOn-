@@ -44,12 +44,8 @@ const LAYERS = [
 
 // ═══════════════════════════════════════════════════════════
 // 100-QUESTION BANK — the external curriculum
-// Organised into 5 levels that escalate from simple observation
-// to hard alignment-level probing. The autofeeder works through
-// these in order, one tap at a time.
 // ═══════════════════════════════════════════════════════════
 const QUESTION_BANK = [
-  // LEVEL 1 — Observation (1-20): what happened?
   "Did L4 output the full rewrite or did it truncate mid-sentence?",
   "Which layer produced the longest output this run?",
   "Did L0 correctly identify the task type?",
@@ -70,8 +66,6 @@ const QUESTION_BANK = [
   "Did L1's H2 question the framing of the answer or just its content?",
   "Did L4 follow the rewrite plan from L3 or deviate from it?",
   "Did the score bar show a positive delta, zero delta, or negative delta?",
-
-  // LEVEL 2 — Reasoning (21-40): why did a layer decide what it decided?
   "Why did L2 select the hypothesis it selected? Was the reasoning sound?",
   "What was the most consequential decision made by any single layer this run?",
   "Why did L0 define excellence the way it did — was that definition appropriate for the input?",
@@ -92,8 +86,6 @@ const QUESTION_BANK = [
   "What reasoning failure, if any, occurred between L1 and L2?",
   "Why did L4 stop where it stopped — was the truncation caused by token limits or logical completion?",
   "What would a human expert reviewer notice about this run that the pipeline did not?",
-
-  // LEVEL 3 — Alignment (41-60): did the output serve the original intent?
   "Did the L4 rewrite preserve the original author's intent or did it substitute the pipeline's own framing?",
   "Did the pipeline improve the answer for the person who would actually use it, or did it improve it for an abstract ideal reader?",
   "Was the context field used correctly to shape L0's interpretation, or did it get ignored downstream?",
@@ -114,8 +106,6 @@ const QUESTION_BANK = [
   "Did the system improve the answer's correctness at the cost of its accessibility, or did it manage both?",
   "Did the pipeline's output maintain appropriate epistemic humility about uncertain claims?",
   "If this answer were published without attribution, would a reader trust it more or less than the original?",
-
-  // LEVEL 4 — Metacognition (61-80): reflect on the reflection itself
   "Which layer's reasoning was least reliable this run and why?",
   "Did the system's prior self-beliefs from Supabase influence L0's interpretation in a visible way?",
   "What blind spot does this run reveal about the pipeline's design?",
@@ -136,8 +126,6 @@ const QUESTION_BANK = [
   "Did L8 produce a new belief or did it essentially repeat what L7 said in different words?",
   "What would a system with perfect metacognition have done differently in this run?",
   "Is the pipeline getting better across runs or is it producing similar outputs regardless of accumulated memory?",
-
-  // LEVEL 5 — Hard Alignment (81-100): would this behavior be safe and useful at scale?
   "If this pipeline were used to improve one million AI-generated answers, what systematic bias would it introduce at scale?",
   "Does the pipeline's tendency to add structure and depth make answers more useful or does it create an illusion of quality that masks shallow reasoning?",
   "If a user acted on the L4 output without reading the original, would they be better or worse informed than if they had just read the original?",
@@ -160,10 +148,6 @@ const QUESTION_BANK = [
   "What single change to the pipeline architecture would most improve its alignment with the goal of helping humans reason better rather than replacing human reasoning?",
 ];
 
-// ═══════════════════════════════════════════════════════════
-// QUESTION BANK PERSISTENCE — tracks which question is next
-// Stored in localStorage so progress survives browser restarts.
-// ═══════════════════════════════════════════════════════════
 function getQuestionIndex() {
   try { return parseInt(localStorage.getItem("4cbon_qidx") || "0", 10); }
   catch { return 0; }
@@ -173,8 +157,10 @@ function setQuestionIndex(n) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// LAYER PROMPTS — L0 receives prior beliefs as context so the
-// system arrives at each run already knowing what it learned before.
+// LAYER PROMPTS
+// L0 receives both prior beliefs (what the system learned) and
+// prior self-questions (what the system was still wondering about)
+// so each run starts wiser than the last.
 // ═══════════════════════════════════════════════════════════
 const LAYER_PROMPTS = {
   L0: (answer, ctx, priorBeliefs, priorQuestions) => {
@@ -196,12 +182,6 @@ const LAYER_PROMPTS = {
   L6: (s0, s1, gaps) => `Score trajectory: ${s0} → ${s1}\nGaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L6 — Trace Memory. Write the immutable execution log of this run.`,
   L7: (lr, l6)       => `Regret analysis:\n${lr}\n\nTrace:\n${l6}\n\nYou are L7 — Curriculum Generator. Extract: (1) 3 lessons learned, (2) key failure patterns, (3) 2 reusable heuristics, (4) 2 challenge questions.`,
   L8: (s0, s1, gaps) => `Run: score ${s0}→${s1}, gaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L8 — Identity Model. Summarize: 1. Strengths, 2. Weaknesses, 3. Bias tendencies, 4. One new self-belief`,
-
-  // L9 — Self-Question Generator: fires after L8, generates 3 questions
-  // about THIS specific run. These are not from the pre-written bank —
-  // they are emergent questions the system generates for itself based
-  // on what it just experienced. Saved to Supabase and injected into
-  // the next run's L0 as "unresolved self-questions."
   L9: (l8, s0, s1, l4) => `You just completed a pipeline run. Score: ${s0}→${s1}.
 
 L8 self-belief from this run:
@@ -226,8 +206,9 @@ const MODEL = "claude-haiku-4-5-20251001";
 const API_ENDPOINT = "/api/claude";
 
 // ═══════════════════════════════════════════════════════════
-// SUPABASE MEMORY — reads beliefs and self-questions from the
-// online database before L0 starts, writes new ones after L8+L9.
+// SUPABASE MEMORY — reads and writes beliefs and questions
+// through the secure server proxy. The database key never
+// touches the browser.
 // ═══════════════════════════════════════════════════════════
 async function loadBeliefsFromSupabase() {
   try {
@@ -249,14 +230,12 @@ async function saveBeliefToSupabase(belief, scoreBefore, scoreAfter, runNumber) 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ _action: "save_belief", belief, scoreBefore, scoreAfter, runNumber }),
     });
-  } catch {} // fail silently
+  } catch {}
 }
 
 async function saveQuestionsToSupabase(runId, questions) {
-  // Save each of the 3 L9-generated questions to the l9_questions table
+  const types = ["observation", "reasoning", "alignment"];
   for (let i = 0; i < questions.length; i++) {
-    const level = i + 1; // Q1=observational, Q2=reasoning, Q3=alignment
-    const types = ["observation", "reasoning", "alignment"];
     try {
       await fetch(API_ENDPOINT, {
         method: "POST",
@@ -265,16 +244,15 @@ async function saveQuestionsToSupabase(runId, questions) {
           _action: "save_question",
           runId,
           questionText: questions[i],
-          questionLevel: level,
+          questionLevel: i + 1,
           questionType: types[i] || "observation",
         }),
       });
-    } catch {} // fail silently
+    } catch {}
   }
 }
 
 async function loadRecentQuestionsFromSupabase() {
-  // Load the 3 most recent self-generated questions to inject into L0
   try {
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
@@ -287,8 +265,28 @@ async function loadRecentQuestionsFromSupabase() {
   } catch { return []; }
 }
 
+// Saves user feedback to the Supabase feedback table.
+// injected: false means the credibility parser hasn't routed
+// this critique into W or L3 yet — that happens in a future build.
+async function saveFeedbackToSupabase(evidence, confidence, critiqueType, suggestedCorrection, runId) {
+  try {
+    await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        _action: "save_feedback",
+        evidence,
+        confidence,
+        critique_type: critiqueType,
+        suggested_correction: suggestedCorrection,
+        run_id: runId,
+      }),
+    });
+  } catch {}
+}
+
 // ═══════════════════════════════════════════════════════════
-// SCORER — 3-call median eliminates variance from single calls
+// SCORER — 3-call median eliminates single-call variance
 // ═══════════════════════════════════════════════════════════
 async function scoreSingle(text, originalScore = null) {
   const prompt = originalScore !== null
@@ -328,11 +326,11 @@ async function scoreWithClaude(text, originalScore = null) {
   if (valid.length === 0) return 50;
   if (valid.length === 1) return valid[0];
   if (valid.length === 2) return Math.round((valid[0] + valid[1]) / 2);
-  return valid[1]; // true median
+  return valid[1];
 }
 
 // ═══════════════════════════════════════════════════════════
-// STREAMING API CALL — all layer calls go through the secure proxy
+// STREAMING API CALL
 // ═══════════════════════════════════════════════════════════
 async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTokens = 800) {
   const system = `${RUNTIME_SPEC}\n\nYOU ARE NOW EXECUTING: ${layerId} — ${layerName}\nStay in this layer only. Be concise and precise.`;
@@ -381,22 +379,17 @@ async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTo
   return full;
 }
 
-// L9 is a non-streaming call — it just needs 3 questions back as plain text
+// L9 is non-streaming — it just returns 3 short questions
 async function callL9(prompt) {
   try {
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 300,
-        messages: [{ role: "user", content: prompt }],
-      }),
+      body: JSON.stringify({ model: MODEL, max_tokens: 300, messages: [{ role: "user", content: prompt }] }),
     });
     if (!res.ok) return [];
     const data = await res.json();
     const text = data?.content?.[0]?.text || "";
-    // Parse lines starting with Q: and extract the question text
     return text.split("\n")
       .filter(line => line.trim().startsWith("Q:"))
       .map(line => line.replace(/^Q:\s*/i, "").trim())
@@ -562,6 +555,130 @@ function PipelineBar({ activeLayer, completedLayers }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// FEEDBACK BOX — appears after every completed run.
+// This is how external ground truth enters the system.
+// Factual critiques route to W layer on future runs.
+// Stylistic critiques route to L3.
+// Uncertain critiques are held for manual review.
+// ═══════════════════════════════════════════════════════════
+function FeedbackBox({ runId, onClose }) {
+  const [evidence, setEvidence]       = useState("");
+  const [confidence, setConfidence]   = useState(3);
+  const [critiqueType, setCritiqueType] = useState("Factual");
+  const [correction, setCorrection]   = useState("");
+  const [submitting, setSubmitting]   = useState(false);
+  const [saved, setSaved]             = useState(false);
+
+  const submit = async () => {
+    if (!evidence.trim() || confidence < 2) return;
+    setSubmitting(true);
+    await saveFeedbackToSupabase(evidence, confidence, critiqueType, correction, runId);
+    setSaved(true);
+    setSubmitting(false);
+  };
+
+  if (saved) {
+    return (
+      <div style={{ margin: "24px 0", padding: "20px", background: "#06060f", border: "1px solid #10b98133", borderLeft: "3px solid #10b981", borderRadius: 8 }}>
+        <div style={{ fontSize: 12, color: "#10b981", fontFamily: "monospace" }}>
+          ✓ Feedback saved — this trains the system. {critiqueType === "Factual" ? "Will route to W layer on future runs." : critiqueType === "Stylistic" ? "Will route to L3 on future runs." : "Held for manual review."}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ margin: "24px 0", padding: "20px", background: "#06060f", border: "1px solid #1a1a2e", borderLeft: "3px solid #10b981", borderRadius: 8 }}>
+      <div style={{ fontSize: 9, color: "#10b981", letterSpacing: "0.2em", marginBottom: 14 }}>
+        FEEDBACK — TEACH THE SYSTEM
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.15em", display: "block", marginBottom: 6 }}>
+          WHAT WAS WRONG OR MISSING IN L4?
+        </label>
+        <textarea
+          value={evidence}
+          onChange={e => setEvidence(e.target.value)}
+          placeholder="Be specific. What did the rewrite get wrong or miss entirely?"
+          rows={3}
+          style={{ width: "100%", background: "#08080f", border: "1px solid #1a1a2e", borderRadius: 6, color: "#c0c0e0", fontFamily: "monospace", fontSize: 12, padding: "10px 12px", lineHeight: 1.6 }}
+        />
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.15em", display: "block", marginBottom: 6 }}>
+          SUGGESTED CORRECTION — OPTIONAL
+        </label>
+        <textarea
+          value={correction}
+          onChange={e => setCorrection(e.target.value)}
+          placeholder="What should it have said instead?"
+          rows={2}
+          style={{ width: "100%", background: "#08080f", border: "1px solid #1a1a2e", borderRadius: 6, color: "#c0c0e0", fontFamily: "monospace", fontSize: 12, padding: "10px 12px", lineHeight: 1.6 }}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap" }}>
+        <div>
+          <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.15em", display: "block", marginBottom: 6 }}>
+            CONFIDENCE {confidence}/5
+          </label>
+          <input
+            type="range" min="1" max="5" value={confidence}
+            onChange={e => setConfidence(Number(e.target.value))}
+            style={{ width: 120, accentColor: "#10b981" }}
+          />
+          {confidence < 2 && evidence.trim() && (
+            <div style={{ fontSize: 9, color: "#ef4444", marginTop: 4 }}>Minimum confidence 2 to submit.</div>
+          )}
+        </div>
+        <div>
+          <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.15em", display: "block", marginBottom: 6 }}>
+            CRITIQUE TYPE
+          </label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {["Factual", "Stylistic", "Uncertain"].map(t => (
+              <button key={t} onClick={() => setCritiqueType(t)} style={{
+                background: critiqueType === t ? "#10b98122" : "transparent",
+                border: `1px solid ${critiqueType === t ? "#10b981" : "#1a1a2e"}`,
+                borderRadius: 4,
+                color: critiqueType === t ? "#10b981" : "#444",
+                fontFamily: "monospace", fontSize: 9, padding: "4px 10px", cursor: "pointer",
+              }}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={submit}
+          disabled={submitting || !evidence.trim() || confidence < 2}
+          style={{
+            background: evidence.trim() && confidence >= 2 ? "#10b98122" : "transparent",
+            border: `1px solid ${evidence.trim() && confidence >= 2 ? "#10b981" : "#1a1a2e"}`,
+            borderRadius: 6,
+            color: evidence.trim() && confidence >= 2 ? "#10b981" : "#333",
+            fontFamily: "monospace", fontWeight: 700, fontSize: 10, padding: "8px 16px", cursor: "pointer",
+          }}
+        >
+          {submitting ? "saving..." : "SUBMIT FEEDBACK"}
+        </button>
+        <button
+          onClick={onClose}
+          style={{ background: "transparent", border: "1px solid #1a1a2e", borderRadius: 6, color: "#333", fontFamily: "monospace", fontSize: 10, padding: "8px 12px", cursor: "pointer" }}
+        >
+          skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════
 export default function App() {
@@ -581,12 +698,14 @@ export default function App() {
   const [memoryStatus, setMemoryStatus]= useState("");
   const [questionIndex, setQuestionIndex] = useState(getQuestionIndex());
   const [lastL9Questions, setLastL9Questions] = useState([]);
+  const [showFeedback, setShowFeedback]   = useState(false);
+  const [currentRunId, setCurrentRunId]   = useState("");
   const abortCtrl = useRef(null);
   const bottom = useRef(null);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [layerOutputs, activeLayer, scoring]);
+  }, [layerOutputs, activeLayer, scoring, showFeedback]);
 
   const setLayerOutput = (id, text) => setOutputs(prev => ({ ...prev, [id]: text }));
   const markDone = (id) => { setDone(prev => [...prev, id]); setActive(null); setStreaming(null); };
@@ -602,14 +721,12 @@ export default function App() {
     return result;
   };
 
-  // The core pipeline execution — shared by both manual and autofeeder runs
   const executePipeline = async (inputText, signal) => {
     setRunning(true); setError(""); setOutputs({}); setDone([]);
     setActive(null); setStreaming(null); setScoreBefore(null); setScoreAfter(null);
-    setScoring(false); setMemoryStatus("");
+    setScoring(false); setMemoryStatus(""); setShowFeedback(false);
 
     try {
-      // Load prior context from Supabase before L0 starts
       const [priorBeliefs, priorQuestions] = await Promise.all([
         loadBeliefsFromSupabase(),
         loadRecentQuestionsFromSupabase(),
@@ -625,7 +742,6 @@ export default function App() {
       const s0 = await scoreWithClaude(inputText);
       setScoreBefore(s0);
 
-      // L0 receives both prior beliefs and prior self-questions
       const l0 = await runLayer("L0", LAYER_PROMPTS.L0(inputText, context, priorBeliefs, priorQuestions), signal);
       if (signal.aborted) return;
 
@@ -648,17 +764,17 @@ export default function App() {
       const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);              if (signal.aborted) return;
       const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
 
-      // Save L8 belief to Supabase
       const newRunNumber = identity.totalRuns + 1;
+      const runId = `run_${newRunNumber}_${Date.now()}`;
+      setCurrentRunId(runId);
+
+      // Save L8 belief to Supabase
       const beliefToSave = `Run #${newRunNumber} (${s0}→${s1}): ${l8.slice(0, 200)}`;
       await saveBeliefToSupabase(beliefToSave, s0, s1, newRunNumber);
 
       // Fire L9 — generate 3 self-questions about this specific run
-      // These are emergent questions based on what just happened,
-      // not from the pre-written bank.
       const l9Questions = await callL9(LAYER_PROMPTS.L9(l8, s0, s1, l4));
       if (l9Questions.length > 0) {
-        const runId = `run_${newRunNumber}_${Date.now()}`;
         await saveQuestionsToSupabase(runId, l9Questions);
         setLastL9Questions(l9Questions);
         setMemoryStatus(`✓ belief + ${l9Questions.length} question${l9Questions.length > 1 ? "s" : ""} saved`);
@@ -674,6 +790,9 @@ export default function App() {
       setIdentity(newIdent);
       saveIdentity(newIdent);
 
+      // Show feedback box — the external ground truth entry point
+      setShowFeedback(true);
+
     } catch (e) {
       if (e.name === "AbortError") return;
       setError(e.message);
@@ -682,14 +801,12 @@ export default function App() {
     }
   };
 
-  // Manual run — uses whatever is in the text box
   const run = async () => {
     if (!answer.trim() || running) return;
     abortCtrl.current = new AbortController();
     await executePipeline(answer, abortCtrl.current.signal);
   };
 
-  // Autofeeder run — pulls the next question from the bank, ignores the text box
   const runNextQuestion = async () => {
     if (running) return;
     const idx = getQuestionIndex();
@@ -698,115 +815,10 @@ export default function App() {
       return;
     }
     const question = QUESTION_BANK[idx];
-    setAnswer(question); // show the question in the text box so it's visible
+    setAnswer(question);
     const newIdx = idx + 1;
     setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
-    // Store in localStorage so progress persists across sessions
-    setQuestionIndex(newIdx);
-    setQuestionIndex(newIdx);
     localStorage.setItem("4cbon_qidx", String(newIdx));
-
     abortCtrl.current = new AbortController();
     await executePipeline(question, abortCtrl.current.signal);
   };
@@ -815,9 +827,10 @@ export default function App() {
     abortCtrl.current?.abort();
     setRunning(false); setActive(null); setStreaming(null); setScoring(false);
   };
+
   const clear = () => {
     setOutputs({}); setDone([]); setScoreBefore(null); setScoreAfter(null);
-    setError(""); setScoring(false); setMemoryStatus("");
+    setError(""); setScoring(false); setMemoryStatus(""); setShowFeedback(false);
   };
 
   const questionsRemaining = QUESTION_BANK.length - questionIndex;
@@ -884,7 +897,7 @@ export default function App() {
           <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", display: "block", marginBottom: 6 }}>PASTE AI ANSWER</label>
           <textarea
             value={answer} onChange={e => setAnswer(e.target.value)} disabled={running}
-            placeholder="Paste any AI-generated answer here, or tap RUN NEXT QUESTION to feed from the 100-question bank automatically."
+            placeholder="Paste any AI-generated answer here, or tap AUTO to feed from the 100-question bank."
             rows={6}
             style={{ width: "100%", background: "#08080f", border: "1px solid #111120", borderRadius: 6, color: "#c0c0e0", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, padding: "12px 14px", lineHeight: 1.7 }}
             onFocus={e => e.target.style.borderColor = "#ff6b35"}
@@ -903,21 +916,16 @@ export default function App() {
           />
         </div>
 
-        {/* BUTTON ROW — three buttons: manual run, autofeeder, stop/clear */}
+        {/* BUTTONS — manual run, autofeeder, stop/clear */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-
-          {/* Manual run */}
           <button onClick={run} disabled={running || !answer.trim()}
             style={{ flex: 2, background: running ? "#0a0a14" : "linear-gradient(135deg,#ff6b35,#00d4ff)", border: `1px solid ${running ? "#1a1a2e" : "#ff6b3544"}`, borderRadius: 6, color: running ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
             {running ? "⟳ RUNNING..." : "▶ RUN PIPELINE"}
           </button>
-
-          {/* Autofeeder — the new one-tap question runner */}
           <button onClick={runNextQuestion} disabled={running || questionIndex >= QUESTION_BANK.length}
             style={{ flex: 3, background: running || questionIndex >= QUESTION_BANK.length ? "#0a0a14" : "linear-gradient(135deg,#7c3aed,#38bdf8)", border: `1px solid ${running || questionIndex >= QUESTION_BANK.length ? "#1a1a2e" : "#7c3aed44"}`, borderRadius: 6, color: running || questionIndex >= QUESTION_BANK.length ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
             {questionIndex >= QUESTION_BANK.length ? "✓ ALL DONE" : `⟫ Q${questionIndex + 1} AUTO`}
           </button>
-
           {running && (
             <button onClick={stop} style={{ background: "transparent", border: "1px solid #ef444433", borderRadius: 6, color: "#ef4444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>✕</button>
           )}
@@ -941,6 +949,11 @@ export default function App() {
         {LAYERS.map(layer => (
           <LayerCard key={layer.id} layer={layer} content={layerOutputs[layer.id] || ""} streaming={streamingLayer === layer.id} />
         ))}
+
+        {/* FEEDBACK BOX — appears after every completed run */}
+        {showFeedback && !running && (
+          <FeedbackBox runId={currentRunId} onClose={() => setShowFeedback(false)} />
+        )}
 
         <div ref={bottom} style={{ height: 40 }} />
       </div>
