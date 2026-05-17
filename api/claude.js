@@ -8,6 +8,60 @@ const isAllowedOrigin = (o) => {
   return false;
 };
 
+// Save identity belief to Supabase after each run
+async function saveBeliefToSupabase(belief, scoreBefore, scoreAfter, runNumber) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !supabaseKey) return;
+
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/identity_beliefs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": supabaseKey,
+        "Authorization": `Bearer ${supabaseKey}`,
+        "Prefer": "return=minimal",
+      },
+      body: JSON.stringify({
+        belief,
+        score_before: scoreBefore,
+        score_after: scoreAfter,
+        run_number: runNumber,
+      }),
+    });
+  } catch (err) {
+    console.error("Supabase write failed:", err.message);
+  }
+}
+
+// Save L9 question to Supabase
+async function saveQuestionToSupabase(runId, questionText, questionLevel, questionType) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !supabaseKey) return;
+
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/l9_questions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": supabaseKey,
+        "Authorization": `Bearer ${supabaseKey}`,
+        "Prefer": "return=minimal",
+      },
+      body: JSON.stringify({
+        run_id: runId,
+        question_text: questionText,
+        question_level: questionLevel,
+        question_type: questionType,
+      }),
+    });
+  } catch (err) {
+    console.error("Supabase question write failed:", err.message);
+  }
+}
+
 export default async function handler(req, res) {
   const origin = req.headers.origin;
 
@@ -30,6 +84,43 @@ export default async function handler(req, res) {
 
   if (!isAllowedOrigin(origin)) {
     res.status(403).json({ error: "Forbidden origin", origin });
+    return;
+  }
+
+  // Handle Supabase save requests from the frontend
+  if (req.body && req.body._action === "save_belief") {
+    const { belief, scoreBefore, scoreAfter, runNumber } = req.body;
+    await saveBeliefToSupabase(belief, scoreBefore, scoreAfter, runNumber);
+    res.status(200).json({ saved: true });
+    return;
+  }
+
+  if (req.body && req.body._action === "save_question") {
+    const { runId, questionText, questionLevel, questionType } = req.body;
+    await saveQuestionToSupabase(runId, questionText, questionLevel, questionType);
+    res.status(200).json({ saved: true });
+    return;
+  }
+
+  // Handle belief retrieval for L0 context injection
+  if (req.body && req.body._action === "get_beliefs") {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+    try {
+      const response = await fetch(
+        `${supabaseUrl}/rest/v1/identity_beliefs?order=created_at.desc&limit=5`,
+        {
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+          },
+        }
+      );
+      const beliefs = await response.json();
+      res.status(200).json({ beliefs });
+    } catch (err) {
+      res.status(200).json({ beliefs: [] });
+    }
     return;
   }
 
