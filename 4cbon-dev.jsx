@@ -42,8 +42,15 @@ const LAYERS = [
   { id: "L8", name: "Identity Model",         color: "#fbbf24", emoji: "⚙" },
 ];
 
+// L0 accepts prior beliefs from Supabase — this is how the system
+// carries memory across sessions. Each run starts wiser than the last.
 const LAYER_PROMPTS = {
-  L0: (answer, ctx) => `${ctx ? `Context/Goal: ${ctx}\n\n` : ""}AI ANSWER:\n${answer}\n\nYou are L0 — Interpretation Engine. Identify: task type, intent, constraints, ambiguities. Define what an excellent version of this answer looks like. Be specific.`,
+  L0: (answer, ctx, priorBeliefs) => {
+    const beliefContext = priorBeliefs && priorBeliefs.length > 0
+      ? `\n\nPRIOR SELF-BELIEFS (from previous runs — use as context, not constraint):\n${priorBeliefs.map(b => `· ${b}`).join("\n")}\n`
+      : "";
+    return `${ctx ? `Context/Goal: ${ctx}\n\n` : ""}${beliefContext}AI ANSWER:\n${answer}\n\nYou are L0 — Interpretation Engine. Identify: task type, intent, constraints, ambiguities. Define what an excellent version of this answer looks like. Be specific.`;
+  },
   P:  (answer, l0)  => `AI ANSWER:\n${answer}\n\nL0 Interpretation:\n${l0}\n\nYou are P — Parsing Layer. Break the answer into logical units. List: (1) claims made, (2) structure used, (3) what is missing, (4) what is weak.`,
   W:  (answer)      => `AI ANSWER:\n${answer}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable.`,
   L1: (answer, p, w)=> `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses:\nH1: [strongest improvement path]\nH2: [radical reframe — question whether the framing of the answer itself is the problem, not just the content]\nH3: [failure mode — what could go wrong if used as-is]`,
@@ -60,12 +67,62 @@ const MODEL = "claude-haiku-4-5-20251001";
 const API_ENDPOINT = "/api/claude";
 
 // ═══════════════════════════════════════════════════════════
-// SCORER — no API key needed, proxy handles it
+// SUPABASE MEMORY — the system's online brain
+// loadBeliefs runs before L0 so the system knows what it learned last time.
+// saveBelief runs after L8 so the next run inherits this run's insight.
+// Both go through the secure server proxy — the database key never touches the browser.
 // ═══════════════════════════════════════════════════════════
-async function scoreWithClaude(text) {
-  const prompt = `Rate the quality of this AI-generated answer 0-100.
+async function loadBeliefsFromSupabase() {
+  try {
+    const res = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ _action: "get_beliefs" }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.beliefs || []).map(b => b.belief).filter(Boolean);
+  } catch {
+    return []; // fail silently — pipeline still runs without memory
+  }
+}
+
+async function saveBeliefToSupabase(belief, scoreBefore, scoreAfter, runNumber) {
+  try {
+    await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        _action: "save_belief",
+        belief,
+        scoreBefore,
+        scoreAfter,
+        runNumber,
+      }),
+    });
+  } catch {
+    // fail silently — localStorage still works as backup
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SCORER — 3-call median kills variance
+// Before score: absolute quality 0-100
+// After score: comparative — was the rewrite better than the original?
+// ═══════════════════════════════════════════════════════════
+async function scoreSingle(text, originalScore = null) {
+  const prompt = originalScore !== null
+    ? `You are judging a REWRITE of an AI answer. The original scored ${originalScore}/100.
+Rate only whether this rewrite improved the original.
+Return a single integer 0-100 where 50 = no change, above 50 = better, below 50 = worse.
+Base your judgment on: clarity, structure, depth, correctness.
+REWRITE:
+${text.slice(0, 1200)}
+Reply with ONLY a single integer 0-100. Nothing else.`
+    : `Rate the quality of this AI-generated answer 0-100.
 Criteria: Clarity (0-25), Structure (0-25), Depth (0-25), Correctness (0-25).
-ANSWER: ${text.slice(0, 1200)}
+ANSWER:
+${text.slice(0, 1200)}
 Reply with ONLY a single integer 0-100. Nothing else.`;
 
   try {
@@ -78,15 +135,28 @@ Reply with ONLY a single integer 0-100. Nothing else.`;
         messages: [{ role: "user", content: prompt }],
       }),
     });
-    if (!res.ok) return 50;
+    if (!res.ok) return null;
     const data = await res.json();
-    const num = parseInt((data?.content?.[0]?.text || "50").replace(/\D/g, ""), 10);
-    return isNaN(num) ? 50 : Math.min(100, Math.max(0, num));
-  } catch { return 50; }
+    const num = parseInt((data?.content?.[0]?.text || "").replace(/\D/g, ""), 10);
+    return isNaN(num) ? null : Math.min(100, Math.max(0, num));
+  } catch { return null; }
+}
+
+async function scoreWithClaude(text, originalScore = null) {
+  const calls = await Promise.all([
+    scoreSingle(text, originalScore),
+    scoreSingle(text, originalScore),
+    scoreSingle(text, originalScore),
+  ]);
+  const valid = calls.filter(n => n !== null).sort((a, b) => a - b);
+  if (valid.length === 0) return 50;
+  if (valid.length === 1) return valid[0];
+  if (valid.length === 2) return Math.round((valid[0] + valid[1]) / 2);
+  return valid[1]; // true median
 }
 
 // ═══════════════════════════════════════════════════════════
-// STREAMING — no API key needed, proxy handles it
+// STREAMING API CALL
 // ═══════════════════════════════════════════════════════════
 async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTokens = 800) {
   const system = `${RUNTIME_SPEC}\n\nYOU ARE NOW EXECUTING: ${layerId} — ${layerName}\nStay in this layer only. Be concise and precise.`;
@@ -136,7 +206,7 @@ async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTo
 }
 
 // ═══════════════════════════════════════════════════════════
-// PERSISTENCE
+// LOCAL IDENTITY — browser backup when Supabase is unavailable
 // ═══════════════════════════════════════════════════════════
 function loadIdentity() {
   try { return JSON.parse(localStorage.getItem("4cbon_identity") || "null") || { totalRuns: 0, beliefs: [] }; }
@@ -308,6 +378,7 @@ export default function App() {
   const [error, setError]              = useState("");
   const [identity, setIdentity]        = useState(loadIdentity());
   const [showIdentity, setShowIdent]   = useState(false);
+  const [memoryStatus, setMemoryStatus]= useState("");
   const abortCtrl = useRef(null);
   const bottom = useRef(null);
 
@@ -335,13 +406,25 @@ export default function App() {
     abortCtrl.current = new AbortController();
     const { signal } = abortCtrl.current;
     setRunning(true); setError(""); setOutputs({}); setDone([]);
-    setActive(null); setStreaming(null); setScoreBefore(null); setScoreAfter(null); setScoring(false);
+    setActive(null); setStreaming(null); setScoreBefore(null); setScoreAfter(null);
+    setScoring(false); setMemoryStatus("");
 
     try {
+      // Load prior beliefs from Supabase before L0 starts.
+      // This is the memory injection — the system arrives at L0
+      // already knowing what it learned from previous runs.
+      const priorBeliefs = await loadBeliefsFromSupabase();
+      if (priorBeliefs.length > 0) {
+        setMemoryStatus(`↑ ${priorBeliefs.length} prior belief${priorBeliefs.length > 1 ? "s" : ""} loaded`);
+      }
+
       const s0 = await scoreWithClaude(answer);
       setScoreBefore(s0);
 
-      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(answer, context), signal);       if (signal.aborted) return;
+      // Pass priorBeliefs into L0 — this is the key line that gives the system memory
+      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(answer, context, priorBeliefs), signal);
+      if (signal.aborted) return;
+
       const p  = await runLayer("P",  LAYER_PROMPTS.P(answer, l0), signal);             if (signal.aborted) return;
       const w  = await runLayer("W",  LAYER_PROMPTS.W(answer), signal);                 if (signal.aborted) return;
       const l1 = await runLayer("L1", LAYER_PROMPTS.L1(answer, p, w), signal);         if (signal.aborted) return;
@@ -350,7 +433,7 @@ export default function App() {
       const l4 = await runLayer("L4", LAYER_PROMPTS.L4(answer, l3, w), signal, 1200);  if (signal.aborted) return;
 
       setScoring(true);
-      const s1 = await scoreWithClaude(l4);
+      const s1 = await scoreWithClaude(l4, s0); // comparative scoring
       setScoring(false);
       setScoreAfter(s1);
 
@@ -359,13 +442,22 @@ export default function App() {
       const lr = await runLayer("LR", LAYER_PROMPTS.LR(answer, l4, s0, s1), signal);   if (signal.aborted) return;
       const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);    if (signal.aborted) return;
       const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);         if (signal.aborted) return;
-      await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);               if (signal.aborted) return;
+      const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);    if (signal.aborted) return;
 
+      // Save this run's self-belief to Supabase so the next run inherits it.
+      // We trim l8 to 200 chars to keep beliefs concise and scannable.
+      const newRunNumber = identity.totalRuns + 1;
+      const beliefToSave = `Run #${newRunNumber} (${s0}→${s1}): ${l8.slice(0, 200)}`;
+      await saveBeliefToSupabase(beliefToSave, s0, s1, newRunNumber);
+
+      // Also save to localStorage as a local backup
       const newIdent = {
-        ...identity, totalRuns: identity.totalRuns + 1,
-        beliefs: [...(identity.beliefs || []).slice(-4), `Run #${identity.totalRuns + 1}: ${s0}→${s1}`],
+        ...identity, totalRuns: newRunNumber,
+        beliefs: [...(identity.beliefs || []).slice(-4), `Run #${newRunNumber}: ${s0}→${s1}`],
       };
-      setIdentity(newIdent); saveIdentity(newIdent);
+      setIdentity(newIdent);
+      saveIdentity(newIdent);
+      setMemoryStatus("✓ belief saved to memory");
 
     } catch (e) {
       if (e.name === "AbortError") return;
@@ -375,8 +467,14 @@ export default function App() {
     }
   };
 
-  const stop = () => { abortCtrl.current?.abort(); setRunning(false); setActive(null); setStreaming(null); setScoring(false); };
-  const clear = () => { setOutputs({}); setDone([]); setScoreBefore(null); setScoreAfter(null); setError(""); setScoring(false); };
+  const stop = () => {
+    abortCtrl.current?.abort();
+    setRunning(false); setActive(null); setStreaming(null); setScoring(false);
+  };
+  const clear = () => {
+    setOutputs({}); setDone([]); setScoreBefore(null); setScoreAfter(null);
+    setError(""); setScoring(false); setMemoryStatus("");
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#03030a", color: "#c0c0e0", fontFamily: "'JetBrains Mono', 'Courier New', monospace" }}>
@@ -404,6 +502,9 @@ export default function App() {
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "#10b981", fontWeight: 700 }}>unlimited runs</div>
               <div style={{ fontSize: 8, color: "#333", marginTop: 2 }}>free to use</div>
+              {memoryStatus && (
+                <div style={{ fontSize: 8, color: "#10b981", marginTop: 2 }}>{memoryStatus}</div>
+              )}
               <div style={{ fontSize: 8, color: "#ff6b35", marginTop: 4, letterSpacing: "0.1em", cursor: "pointer", textDecoration: "underline" }} onClick={() => setShowIdent(!showIdentity)}>
                 {showIdentity ? "hide" : "identity"} · run #{identity.totalRuns}
               </div>
@@ -415,7 +516,7 @@ export default function App() {
       {showIdentity && (
         <div style={{ background: "#06060f", borderBottom: "1px solid #0f0f1e", padding: "12px 20px" }}>
           <div style={{ maxWidth: 720, margin: "0 auto", fontSize: 11, color: "#5a5a82", lineHeight: 1.8 }}>
-            <div style={{ color: "#fbbf24", fontSize: 9, letterSpacing: "0.2em", marginBottom: 6 }}>L8 IDENTITY MODEL</div>
+            <div style={{ color: "#fbbf24", fontSize: 9, letterSpacing: "0.2em", marginBottom: 6 }}>L8 IDENTITY MODEL · Supabase memory active</div>
             <div>Total runs: {identity.totalRuns}</div>
             {(identity.beliefs || []).slice(-3).map((b, i) => <div key={i}>· {b}</div>)}
           </div>
