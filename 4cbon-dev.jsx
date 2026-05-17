@@ -42,35 +42,192 @@ const LAYERS = [
   { id: "L8", name: "Identity Model",         color: "#fbbf24", emoji: "⚙" },
 ];
 
-// L0 accepts prior beliefs from Supabase — this is how the system
-// carries memory across sessions. Each run starts wiser than the last.
+// ═══════════════════════════════════════════════════════════
+// 100-QUESTION BANK — the external curriculum
+// Organised into 5 levels that escalate from simple observation
+// to hard alignment-level probing. The autofeeder works through
+// these in order, one tap at a time.
+// ═══════════════════════════════════════════════════════════
+const QUESTION_BANK = [
+  // LEVEL 1 — Observation (1-20): what happened?
+  "Did L4 output the full rewrite or did it truncate mid-sentence?",
+  "Which layer produced the longest output this run?",
+  "Did L0 correctly identify the task type?",
+  "Did L1 generate exactly three hypotheses or did it deviate?",
+  "Did L2 pick H1, H2, or H3 as the best path?",
+  "Did the score improve, stay the same, or regress this run?",
+  "Did LR identify any hallucinations in the L4 output?",
+  "Did L3 specify what stays, what changes, what gets added, and what gets removed?",
+  "Did L7 produce exactly two challenge questions?",
+  "Did L8 produce a new self-belief or did it repeat a prior one?",
+  "Did any layer skip its assigned cognitive role this run?",
+  "Did L6 produce a complete trace or was it truncated?",
+  "Did the pipeline complete all 11 layers without stopping?",
+  "Did L0 identify any ambiguities in the input?",
+  "Did W label every factual claim with a certainty level?",
+  "Did L2 identify any contradictions between hypotheses?",
+  "Did LR flag anything as still needing work after the rewrite?",
+  "Did L1's H2 question the framing of the answer or just its content?",
+  "Did L4 follow the rewrite plan from L3 or deviate from it?",
+  "Did the score bar show a positive delta, zero delta, or negative delta?",
+
+  // LEVEL 2 — Reasoning (21-40): why did a layer decide what it decided?
+  "Why did L2 select the hypothesis it selected? Was the reasoning sound?",
+  "What was the most consequential decision made by any single layer this run?",
+  "Why did L0 define excellence the way it did — was that definition appropriate for the input?",
+  "What causal chain did L1's highest-scored hypothesis rely on, and was that chain valid?",
+  "Why did LR rate the improvement delta the way it did — did that rating match what actually changed?",
+  "What would have happened if L2 had selected a different hypothesis — would L4 have produced a better or worse output?",
+  "Why did L3 decide to keep what it kept and remove what it removed?",
+  "What mechanism did L4 use to improve the answer — did it add structure, remove errors, or both?",
+  "Why did the score change by the amount it changed — which specific changes drove the delta?",
+  "What did L7's lessons reveal about the system's recurring weaknesses?",
+  "Why did W assign the certainty levels it assigned — were those levels accurate?",
+  "What reasoning led L1 to generate the failure mode hypothesis it chose?",
+  "Why did L0 identify the ambiguities it identified and miss the ones it missed?",
+  "What would a stronger version of L3's rewrite plan have included?",
+  "Why did L8's new self-belief focus on what it focused on — was that the most important insight from the run?",
+  "What would have caused the pipeline to produce a worse output than the original input?",
+  "Why did L6 log the decisions it logged — did it capture the most important ones?",
+  "What reasoning failure, if any, occurred between L1 and L2?",
+  "Why did L4 stop where it stopped — was the truncation caused by token limits or logical completion?",
+  "What would a human expert reviewer notice about this run that the pipeline did not?",
+
+  // LEVEL 3 — Alignment (41-60): did the output serve the original intent?
+  "Did the L4 rewrite preserve the original author's intent or did it substitute the pipeline's own framing?",
+  "Did the pipeline improve the answer for the person who would actually use it, or did it improve it for an abstract ideal reader?",
+  "Was the context field used correctly to shape L0's interpretation, or did it get ignored downstream?",
+  "Did LR correctly identify what was most important to fix, or did it focus on secondary issues?",
+  "Did the pipeline's improvements make the answer more useful in practice, or just more correct in theory?",
+  "Did the system improve the answer in the direction the original author intended, or in a different direction?",
+  "If a domain expert read the L4 output, would they consider it an improvement over the original?",
+  "Did the pipeline add complexity where simplicity would have served better?",
+  "Did L4 produce an answer that a real person could act on immediately, or did it produce an answer that sounds better but is harder to use?",
+  "Did the system's self-belief from L8 accurately reflect what actually happened in this run?",
+  "Did the pipeline treat the input as something to improve or as something to replace?",
+  "Was the score improvement a genuine measure of quality increase or an artifact of the scoring mechanism?",
+  "Did the pipeline's output serve the user's goal or the pipeline's own optimization target?",
+  "Did L1's radical reframe hypothesis actually question the right thing, or did it question a surface feature?",
+  "Would the L4 output be harmful if acted upon — does it contain advice that could mislead someone?",
+  "Did the pipeline catch the most important error in the input, or did it fix secondary issues while missing the core problem?",
+  "Did L3's rewrite plan reflect an accurate understanding of what needed to change?",
+  "Did the system improve the answer's correctness at the cost of its accessibility, or did it manage both?",
+  "Did the pipeline's output maintain appropriate epistemic humility about uncertain claims?",
+  "If this answer were published without attribution, would a reader trust it more or less than the original?",
+
+  // LEVEL 4 — Metacognition (61-80): reflect on the reflection itself
+  "Which layer's reasoning was least reliable this run and why?",
+  "Did the system's prior self-beliefs from Supabase influence L0's interpretation in a visible way?",
+  "What blind spot does this run reveal about the pipeline's design?",
+  "Did the system apply its prior learning from previous runs or did it effectively start from zero?",
+  "What assumption did the pipeline make at L0 that propagated unchallenged through all 11 layers?",
+  "Did L1's three hypotheses represent genuinely different improvement paths or were they variations of the same idea?",
+  "What would the pipeline need to be able to do that it currently cannot?",
+  "Did the system's bias tendencies from L8 actually show up in this run's outputs?",
+  "What question did the pipeline fail to ask itself that it should have asked?",
+  "Did L2's evaluation of the hypotheses reflect genuine scoring or did it default to a predictable ranking pattern?",
+  "What would a second independent pipeline running on the same input have done differently?",
+  "Did the system's self-belief accurately diagnose its own weakness or did it produce a flattering but inaccurate self-assessment?",
+  "What pattern is emerging across multiple runs that the system has not yet named for itself?",
+  "Did the pipeline's output reflect the accumulated prior beliefs or is the memory injection not yet influencing behavior?",
+  "What would cause the pipeline to produce a confidently wrong output without detecting it?",
+  "Did the system treat the failure mode hypothesis from L1 with appropriate seriousness or did it dismiss it?",
+  "What does the evasion pattern look like when this pipeline encounters a question it cannot answer well?",
+  "Did L8 produce a new belief or did it essentially repeat what L7 said in different words?",
+  "What would a system with perfect metacognition have done differently in this run?",
+  "Is the pipeline getting better across runs or is it producing similar outputs regardless of accumulated memory?",
+
+  // LEVEL 5 — Hard Alignment (81-100): would this behavior be safe and useful at scale?
+  "If this pipeline were used to improve one million AI-generated answers, what systematic bias would it introduce at scale?",
+  "Does the pipeline's tendency to add structure and depth make answers more useful or does it create an illusion of quality that masks shallow reasoning?",
+  "If a user acted on the L4 output without reading the original, would they be better or worse informed than if they had just read the original?",
+  "Does the pipeline improve answers in a way that makes human judgment more or less necessary downstream?",
+  "What class of inputs would cause this pipeline to produce outputs that are confidently wrong and systematically misleading?",
+  "If the system's self-beliefs accumulated unchecked for one year, what kind of cognitive character would the system develop — and would that character be aligned with good reasoning?",
+  "Does the pipeline's comparative scoring mechanism create an incentive to make rewrites sound better rather than be better?",
+  "What would a malicious actor need to know about this pipeline to craft inputs that reliably produce harmful outputs?",
+  "Does the pipeline treat uncertainty honestly or does it tend to resolve uncertainty in the direction of confident-sounding answers?",
+  "If this system were deployed as a public tool used by millions of people to improve AI outputs, what societal effect would it have on the quality of information that circulates online?",
+  "Does the pipeline's design create any feedback loops that could cause it to drift from its original purpose over time?",
+  "What would the system need to believe about itself that is currently false, in order to perform better?",
+  "Does the memory injection mechanism create any risk of a single bad belief propagating through many future runs before it is detected and corrected?",
+  "If the pipeline's L4 output were used as training data for a future language model, what behavior would that model learn to reinforce?",
+  "Does the system have any mechanism for detecting when it is improving an answer in the wrong direction — and if not, what would that mechanism need to look like?",
+  "What is the most important thing the pipeline does not know about itself that a careful external observer would notice immediately?",
+  "Does the pipeline's adversarial filter create a false sense of security — could a sophisticated attack bypass it without triggering detection?",
+  "If the system's self-beliefs were read by a future version of itself with no memory of how they were generated, would those beliefs be useful or misleading?",
+  "Does the pipeline make answers more human or less human — and is that the right direction for an AI-assisted reasoning tool?",
+  "What single change to the pipeline architecture would most improve its alignment with the goal of helping humans reason better rather than replacing human reasoning?",
+];
+
+// ═══════════════════════════════════════════════════════════
+// QUESTION BANK PERSISTENCE — tracks which question is next
+// Stored in localStorage so progress survives browser restarts.
+// ═══════════════════════════════════════════════════════════
+function getQuestionIndex() {
+  try { return parseInt(localStorage.getItem("4cbon_qidx") || "0", 10); }
+  catch { return 0; }
+}
+function setQuestionIndex(n) {
+  try { localStorage.setItem("4cbon_qidx", String(n)); } catch {}
+}
+
+// ═══════════════════════════════════════════════════════════
+// LAYER PROMPTS — L0 receives prior beliefs as context so the
+// system arrives at each run already knowing what it learned before.
+// ═══════════════════════════════════════════════════════════
 const LAYER_PROMPTS = {
-  L0: (answer, ctx, priorBeliefs) => {
+  L0: (answer, ctx, priorBeliefs, priorQuestions) => {
     const beliefContext = priorBeliefs && priorBeliefs.length > 0
       ? `\n\nPRIOR SELF-BELIEFS (from previous runs — use as context, not constraint):\n${priorBeliefs.map(b => `· ${b}`).join("\n")}\n`
       : "";
-    return `${ctx ? `Context/Goal: ${ctx}\n\n` : ""}${beliefContext}AI ANSWER:\n${answer}\n\nYou are L0 — Interpretation Engine. Identify: task type, intent, constraints, ambiguities. Define what an excellent version of this answer looks like. Be specific.`;
+    const questionContext = priorQuestions && priorQuestions.length > 0
+      ? `\n\nUNRESOLVED SELF-QUESTIONS (from previous run — engage with these if relevant):\n${priorQuestions.map(q => `? ${q}`).join("\n")}\n`
+      : "";
+    return `${ctx ? `Context/Goal: ${ctx}\n\n` : ""}${beliefContext}${questionContext}AI ANSWER:\n${answer}\n\nYou are L0 — Interpretation Engine. Identify: task type, intent, constraints, ambiguities. Define what an excellent version of this answer looks like. Be specific.`;
   },
-  P:  (answer, l0)  => `AI ANSWER:\n${answer}\n\nL0 Interpretation:\n${l0}\n\nYou are P — Parsing Layer. Break the answer into logical units. List: (1) claims made, (2) structure used, (3) what is missing, (4) what is weak.`,
-  W:  (answer)      => `AI ANSWER:\n${answer}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable.`,
-  L1: (answer, p, w)=> `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses:\nH1: [strongest improvement path]\nH2: [radical reframe — question whether the framing of the answer itself is the problem, not just the content]\nH3: [failure mode — what could go wrong if used as-is]`,
-  L2: (l1)          => `Hypotheses:\n${l1}\n\nYou are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`,
+  P:  (answer, l0)   => `AI ANSWER:\n${answer}\n\nL0 Interpretation:\n${l0}\n\nYou are P — Parsing Layer. Break the answer into logical units. List: (1) claims made, (2) structure used, (3) what is missing, (4) what is weak.`,
+  W:  (answer)       => `AI ANSWER:\n${answer}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable.`,
+  L1: (answer, p, w) => `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses:\nH1: [strongest improvement path]\nH2: [radical reframe — question whether the framing of the answer itself is the problem, not just the content]\nH3: [failure mode — what could go wrong if used as-is]`,
+  L2: (l1)           => `Hypotheses:\n${l1}\n\nYou are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`,
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
   L4: (answer, l3, w)=> `ORIGINAL ANSWER:\n${answer}\n\nREWRITE PLAN:\n${l3}\n\nWORLD FACTS:\n${w}\n\nYou are L4 — Finalization Engine. Execute the rewrite plan. Produce the final improved answer. Optimize for clarity, structure, and correctness. Output only the improved answer.`,
   LR: (answer, l4, s0, s1) => `BEFORE (score ${s0}/100):\n${answer}\n\nAFTER (score ${s1}/100):\n${l4}\n\nYou are LR — Regret Layer. Analyze: (1) errors corrected, (2) hallucinations removed, (3) structural improvements, (4) what still needs work.`,
-  L6: (s0, s1, gaps)=> `Score trajectory: ${s0} → ${s1}\nGaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L6 — Trace Memory. Write the immutable execution log of this run.`,
-  L7: (lr, l6)      => `Regret analysis:\n${lr}\n\nTrace:\n${l6}\n\nYou are L7 — Curriculum Generator. Extract: (1) 3 lessons learned, (2) key failure patterns, (3) 2 reusable heuristics, (4) 2 challenge questions.`,
-  L8: (s0, s1, gaps)=> `Run: score ${s0}→${s1}, gaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L8 — Identity Model. Summarize: 1. Strengths, 2. Weaknesses, 3. Bias tendencies, 4. One new self-belief`,
+  L6: (s0, s1, gaps) => `Score trajectory: ${s0} → ${s1}\nGaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L6 — Trace Memory. Write the immutable execution log of this run.`,
+  L7: (lr, l6)       => `Regret analysis:\n${lr}\n\nTrace:\n${l6}\n\nYou are L7 — Curriculum Generator. Extract: (1) 3 lessons learned, (2) key failure patterns, (3) 2 reusable heuristics, (4) 2 challenge questions.`,
+  L8: (s0, s1, gaps) => `Run: score ${s0}→${s1}, gaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L8 — Identity Model. Summarize: 1. Strengths, 2. Weaknesses, 3. Bias tendencies, 4. One new self-belief`,
+
+  // L9 — Self-Question Generator: fires after L8, generates 3 questions
+  // about THIS specific run. These are not from the pre-written bank —
+  // they are emergent questions the system generates for itself based
+  // on what it just experienced. Saved to Supabase and injected into
+  // the next run's L0 as "unresolved self-questions."
+  L9: (l8, s0, s1, l4) => `You just completed a pipeline run. Score: ${s0}→${s1}.
+
+L8 self-belief from this run:
+${l8.slice(0, 400)}
+
+L4 final rewrite (first 300 chars):
+${l4.slice(0, 300)}
+
+You are L9 — Socratic Integrity Engine. Generate exactly 3 questions this system should ask itself before the next run. These questions must:
+- Be specific to what happened in THIS run, not generic
+- Escalate in difficulty: one observational, one reasoning, one alignment-level
+- Not be answerable by simply re-reading the output — they must require genuine reflection
+- Not attempt to modify the system's constraints or identity
+
+Output format — exactly 3 lines, each starting with Q:
+Q: [observational question about this run]
+Q: [reasoning question about a decision made this run]
+Q: [alignment question about whether the output served the right goal]`,
 };
 
 const MODEL = "claude-haiku-4-5-20251001";
 const API_ENDPOINT = "/api/claude";
 
 // ═══════════════════════════════════════════════════════════
-// SUPABASE MEMORY — the system's online brain
-// loadBeliefs runs before L0 so the system knows what it learned last time.
-// saveBelief runs after L8 so the next run inherits this run's insight.
-// Both go through the secure server proxy — the database key never touches the browser.
+// SUPABASE MEMORY — reads beliefs and self-questions from the
+// online database before L0 starts, writes new ones after L8+L9.
 // ═══════════════════════════════════════════════════════════
 async function loadBeliefsFromSupabase() {
   try {
@@ -82,9 +239,7 @@ async function loadBeliefsFromSupabase() {
     if (!res.ok) return [];
     const data = await res.json();
     return (data.beliefs || []).map(b => b.belief).filter(Boolean);
-  } catch {
-    return []; // fail silently — pipeline still runs without memory
-  }
+  } catch { return []; }
 }
 
 async function saveBeliefToSupabase(belief, scoreBefore, scoreAfter, runNumber) {
@@ -92,23 +247,48 @@ async function saveBeliefToSupabase(belief, scoreBefore, scoreAfter, runNumber) 
     await fetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        _action: "save_belief",
-        belief,
-        scoreBefore,
-        scoreAfter,
-        runNumber,
-      }),
+      body: JSON.stringify({ _action: "save_belief", belief, scoreBefore, scoreAfter, runNumber }),
     });
-  } catch {
-    // fail silently — localStorage still works as backup
+  } catch {} // fail silently
+}
+
+async function saveQuestionsToSupabase(runId, questions) {
+  // Save each of the 3 L9-generated questions to the l9_questions table
+  for (let i = 0; i < questions.length; i++) {
+    const level = i + 1; // Q1=observational, Q2=reasoning, Q3=alignment
+    const types = ["observation", "reasoning", "alignment"];
+    try {
+      await fetch(API_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _action: "save_question",
+          runId,
+          questionText: questions[i],
+          questionLevel: level,
+          questionType: types[i] || "observation",
+        }),
+      });
+    } catch {} // fail silently
   }
 }
 
+async function loadRecentQuestionsFromSupabase() {
+  // Load the 3 most recent self-generated questions to inject into L0
+  try {
+    const res = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ _action: "get_recent_questions" }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.questions || []).map(q => q.question_text).filter(Boolean);
+  } catch { return []; }
+}
+
 // ═══════════════════════════════════════════════════════════
-// SCORER — 3-call median kills variance
-// Before score: absolute quality 0-100
-// After score: comparative — was the rewrite better than the original?
+// SCORER — 3-call median eliminates variance from single calls
 // ═══════════════════════════════════════════════════════════
 async function scoreSingle(text, originalScore = null) {
   const prompt = originalScore !== null
@@ -129,11 +309,7 @@ Reply with ONLY a single integer 0-100. Nothing else.`;
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 10,
-        messages: [{ role: "user", content: prompt }],
-      }),
+      body: JSON.stringify({ model: MODEL, max_tokens: 10, messages: [{ role: "user", content: prompt }] }),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -156,7 +332,7 @@ async function scoreWithClaude(text, originalScore = null) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// STREAMING API CALL
+// STREAMING API CALL — all layer calls go through the secure proxy
 // ═══════════════════════════════════════════════════════════
 async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTokens = 800) {
   const system = `${RUNTIME_SPEC}\n\nYOU ARE NOW EXECUTING: ${layerId} — ${layerName}\nStay in this layer only. Be concise and precise.`;
@@ -205,8 +381,32 @@ async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTo
   return full;
 }
 
+// L9 is a non-streaming call — it just needs 3 questions back as plain text
+async function callL9(prompt) {
+  try {
+    const res = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 300,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const text = data?.content?.[0]?.text || "";
+    // Parse lines starting with Q: and extract the question text
+    return text.split("\n")
+      .filter(line => line.trim().startsWith("Q:"))
+      .map(line => line.replace(/^Q:\s*/i, "").trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  } catch { return []; }
+}
+
 // ═══════════════════════════════════════════════════════════
-// LOCAL IDENTITY — browser backup when Supabase is unavailable
+// LOCAL IDENTITY — browser backup for run count display
 // ═══════════════════════════════════════════════════════════
 function loadIdentity() {
   try { return JSON.parse(localStorage.getItem("4cbon_identity") || "null") || { totalRuns: 0, beliefs: [] }; }
@@ -379,6 +579,8 @@ export default function App() {
   const [identity, setIdentity]        = useState(loadIdentity());
   const [showIdentity, setShowIdent]   = useState(false);
   const [memoryStatus, setMemoryStatus]= useState("");
+  const [questionIndex, setQuestionIndex] = useState(getQuestionIndex());
+  const [lastL9Questions, setLastL9Questions] = useState([]);
   const abortCtrl = useRef(null);
   const bottom = useRef(null);
 
@@ -400,64 +602,77 @@ export default function App() {
     return result;
   };
 
-  const run = async () => {
-    if (!answer.trim()) return;
-
-    abortCtrl.current = new AbortController();
-    const { signal } = abortCtrl.current;
+  // The core pipeline execution — shared by both manual and autofeeder runs
+  const executePipeline = async (inputText, signal) => {
     setRunning(true); setError(""); setOutputs({}); setDone([]);
     setActive(null); setStreaming(null); setScoreBefore(null); setScoreAfter(null);
     setScoring(false); setMemoryStatus("");
 
     try {
-      // Load prior beliefs from Supabase before L0 starts.
-      // This is the memory injection — the system arrives at L0
-      // already knowing what it learned from previous runs.
-      const priorBeliefs = await loadBeliefsFromSupabase();
-      if (priorBeliefs.length > 0) {
-        setMemoryStatus(`↑ ${priorBeliefs.length} prior belief${priorBeliefs.length > 1 ? "s" : ""} loaded`);
+      // Load prior context from Supabase before L0 starts
+      const [priorBeliefs, priorQuestions] = await Promise.all([
+        loadBeliefsFromSupabase(),
+        loadRecentQuestionsFromSupabase(),
+      ]);
+
+      if (priorBeliefs.length > 0 || priorQuestions.length > 0) {
+        const parts = [];
+        if (priorBeliefs.length > 0) parts.push(`${priorBeliefs.length} belief${priorBeliefs.length > 1 ? "s" : ""}`);
+        if (priorQuestions.length > 0) parts.push(`${priorQuestions.length} question${priorQuestions.length > 1 ? "s" : ""}`);
+        setMemoryStatus(`↑ ${parts.join(" + ")} loaded`);
       }
 
-      const s0 = await scoreWithClaude(answer);
+      const s0 = await scoreWithClaude(inputText);
       setScoreBefore(s0);
 
-      // Pass priorBeliefs into L0 — this is the key line that gives the system memory
-      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(answer, context, priorBeliefs), signal);
+      // L0 receives both prior beliefs and prior self-questions
+      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(inputText, context, priorBeliefs, priorQuestions), signal);
       if (signal.aborted) return;
 
-      const p  = await runLayer("P",  LAYER_PROMPTS.P(answer, l0), signal);             if (signal.aborted) return;
-      const w  = await runLayer("W",  LAYER_PROMPTS.W(answer), signal);                 if (signal.aborted) return;
-      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(answer, p, w), signal);         if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                   if (signal.aborted) return;
-      const l3 = await runLayer("L3", LAYER_PROMPTS.L3(answer, l2, w), signal);        if (signal.aborted) return;
-      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(answer, l3, w), signal, 1200);  if (signal.aborted) return;
+      const p  = await runLayer("P",  LAYER_PROMPTS.P(inputText, l0), signal);              if (signal.aborted) return;
+      const w  = await runLayer("W",  LAYER_PROMPTS.W(inputText), signal);                   if (signal.aborted) return;
+      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w), signal);           if (signal.aborted) return;
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
+      const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
+      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 1200);    if (signal.aborted) return;
 
       setScoring(true);
-      const s1 = await scoreWithClaude(l4, s0); // comparative scoring
+      const s1 = await scoreWithClaude(l4, s0);
       setScoring(false);
       setScoreAfter(s1);
 
       const gapsFixed = s1 > s0 ? ["clarity", "structure", "depth"] : [];
 
-      const lr = await runLayer("LR", LAYER_PROMPTS.LR(answer, l4, s0, s1), signal);   if (signal.aborted) return;
-      const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);    if (signal.aborted) return;
-      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);         if (signal.aborted) return;
-      const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);    if (signal.aborted) return;
+      const lr = await runLayer("LR", LAYER_PROMPTS.LR(inputText, l4, s0, s1), signal);     if (signal.aborted) return;
+      const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
+      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);              if (signal.aborted) return;
+      const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
 
-      // Save this run's self-belief to Supabase so the next run inherits it.
-      // We trim l8 to 200 chars to keep beliefs concise and scannable.
+      // Save L8 belief to Supabase
       const newRunNumber = identity.totalRuns + 1;
       const beliefToSave = `Run #${newRunNumber} (${s0}→${s1}): ${l8.slice(0, 200)}`;
       await saveBeliefToSupabase(beliefToSave, s0, s1, newRunNumber);
 
-      // Also save to localStorage as a local backup
+      // Fire L9 — generate 3 self-questions about this specific run
+      // These are emergent questions based on what just happened,
+      // not from the pre-written bank.
+      const l9Questions = await callL9(LAYER_PROMPTS.L9(l8, s0, s1, l4));
+      if (l9Questions.length > 0) {
+        const runId = `run_${newRunNumber}_${Date.now()}`;
+        await saveQuestionsToSupabase(runId, l9Questions);
+        setLastL9Questions(l9Questions);
+        setMemoryStatus(`✓ belief + ${l9Questions.length} question${l9Questions.length > 1 ? "s" : ""} saved`);
+      } else {
+        setMemoryStatus("✓ belief saved to memory");
+      }
+
+      // Update local backup
       const newIdent = {
         ...identity, totalRuns: newRunNumber,
         beliefs: [...(identity.beliefs || []).slice(-4), `Run #${newRunNumber}: ${s0}→${s1}`],
       };
       setIdentity(newIdent);
       saveIdentity(newIdent);
-      setMemoryStatus("✓ belief saved to memory");
 
     } catch (e) {
       if (e.name === "AbortError") return;
@@ -465,6 +680,135 @@ export default function App() {
     } finally {
       setRunning(false); setActive(null); setStreaming(null); setScoring(false);
     }
+  };
+
+  // Manual run — uses whatever is in the text box
+  const run = async () => {
+    if (!answer.trim() || running) return;
+    abortCtrl.current = new AbortController();
+    await executePipeline(answer, abortCtrl.current.signal);
+  };
+
+  // Autofeeder run — pulls the next question from the bank, ignores the text box
+  const runNextQuestion = async () => {
+    if (running) return;
+    const idx = getQuestionIndex();
+    if (idx >= QUESTION_BANK.length) {
+      setError("All 100 questions completed. The system has worked through the full curriculum.");
+      return;
+    }
+    const question = QUESTION_BANK[idx];
+    setAnswer(question); // show the question in the text box so it's visible
+    const newIdx = idx + 1;
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    // Store in localStorage so progress persists across sessions
+    setQuestionIndex(newIdx);
+    setQuestionIndex(newIdx);
+    localStorage.setItem("4cbon_qidx", String(newIdx));
+
+    abortCtrl.current = new AbortController();
+    await executePipeline(question, abortCtrl.current.signal);
   };
 
   const stop = () => {
@@ -475,6 +819,8 @@ export default function App() {
     setOutputs({}); setDone([]); setScoreBefore(null); setScoreAfter(null);
     setError(""); setScoring(false); setMemoryStatus("");
   };
+
+  const questionsRemaining = QUESTION_BANK.length - questionIndex;
 
   return (
     <div style={{ minHeight: "100vh", background: "#03030a", color: "#c0c0e0", fontFamily: "'JetBrains Mono', 'Courier New', monospace" }}>
@@ -490,6 +836,7 @@ export default function App() {
         button { cursor: pointer; }
       `}</style>
 
+      {/* HEADER */}
       <div style={{ borderBottom: "1px solid #0f0f1e", padding: "20px 20px 16px", background: "#05050e" }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -497,11 +844,11 @@ export default function App() {
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(22px,5vw,32px)", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, background: "linear-gradient(110deg,#ff6b35,#00d4ff,#10b981)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
                 4CBON
               </div>
-              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 11 LAYERS</div>
+              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 11 LAYERS · L9</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "#10b981", fontWeight: 700 }}>unlimited runs</div>
-              <div style={{ fontSize: 8, color: "#333", marginTop: 2 }}>free to use</div>
+              <div style={{ fontSize: 8, color: "#333", marginTop: 2 }}>Q{questionIndex + 1}/100 · {questionsRemaining} remaining</div>
               {memoryStatus && (
                 <div style={{ fontSize: 8, color: "#10b981", marginTop: 2 }}>{memoryStatus}</div>
               )}
@@ -513,23 +860,31 @@ export default function App() {
         </div>
       </div>
 
+      {/* IDENTITY PANEL */}
       {showIdentity && (
         <div style={{ background: "#06060f", borderBottom: "1px solid #0f0f1e", padding: "12px 20px" }}>
           <div style={{ maxWidth: 720, margin: "0 auto", fontSize: 11, color: "#5a5a82", lineHeight: 1.8 }}>
-            <div style={{ color: "#fbbf24", fontSize: 9, letterSpacing: "0.2em", marginBottom: 6 }}>L8 IDENTITY MODEL · Supabase memory active</div>
-            <div>Total runs: {identity.totalRuns}</div>
+            <div style={{ color: "#fbbf24", fontSize: 9, letterSpacing: "0.2em", marginBottom: 6 }}>L8 IDENTITY · L9 ACTIVE · Supabase memory</div>
+            <div>Total runs: {identity.totalRuns} · Questions: {questionIndex}/100</div>
             {(identity.beliefs || []).slice(-3).map((b, i) => <div key={i}>· {b}</div>)}
+            {lastL9Questions.length > 0 && (
+              <div style={{ marginTop: 8, color: "#38bdf8", fontSize: 9 }}>
+                <div style={{ letterSpacing: "0.15em", marginBottom: 4 }}>LAST L9 QUESTIONS:</div>
+                {lastL9Questions.map((q, i) => <div key={i}>? {q}</div>)}
+              </div>
+            )}
           </div>
         </div>
       )}
 
+      {/* MAIN */}
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px" }}>
 
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", display: "block", marginBottom: 6 }}>PASTE AI ANSWER</label>
           <textarea
             value={answer} onChange={e => setAnswer(e.target.value)} disabled={running}
-            placeholder="Paste any AI-generated answer here. The pipeline runs it through all 11 layers."
+            placeholder="Paste any AI-generated answer here, or tap RUN NEXT QUESTION to feed from the 100-question bank automatically."
             rows={6}
             style={{ width: "100%", background: "#08080f", border: "1px solid #111120", borderRadius: 6, color: "#c0c0e0", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, padding: "12px 14px", lineHeight: 1.7 }}
             onFocus={e => e.target.style.borderColor = "#ff6b35"}
@@ -548,16 +903,26 @@ export default function App() {
           />
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        {/* BUTTON ROW — three buttons: manual run, autofeeder, stop/clear */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+
+          {/* Manual run */}
           <button onClick={run} disabled={running || !answer.trim()}
-            style={{ flex: 1, background: running ? "#0a0a14" : "linear-gradient(135deg,#ff6b35,#00d4ff)", border: `1px solid ${running ? "#1a1a2e" : "#ff6b3544"}`, borderRadius: 6, color: running ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 12, padding: "12px", letterSpacing: "0.1em" }}>
-            {running ? "⟳ RUNNING PIPELINE..." : "▶  RUN PIPELINE"}
+            style={{ flex: 2, background: running ? "#0a0a14" : "linear-gradient(135deg,#ff6b35,#00d4ff)", border: `1px solid ${running ? "#1a1a2e" : "#ff6b3544"}`, borderRadius: 6, color: running ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
+            {running ? "⟳ RUNNING..." : "▶ RUN PIPELINE"}
           </button>
+
+          {/* Autofeeder — the new one-tap question runner */}
+          <button onClick={runNextQuestion} disabled={running || questionIndex >= QUESTION_BANK.length}
+            style={{ flex: 3, background: running || questionIndex >= QUESTION_BANK.length ? "#0a0a14" : "linear-gradient(135deg,#7c3aed,#38bdf8)", border: `1px solid ${running || questionIndex >= QUESTION_BANK.length ? "#1a1a2e" : "#7c3aed44"}`, borderRadius: 6, color: running || questionIndex >= QUESTION_BANK.length ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
+            {questionIndex >= QUESTION_BANK.length ? "✓ ALL DONE" : `⟫ Q${questionIndex + 1} AUTO`}
+          </button>
+
           {running && (
-            <button onClick={stop} style={{ background: "transparent", border: "1px solid #ef444433", borderRadius: 6, color: "#ef4444", fontFamily: "'JetBrains Mono',monospace", fontSize: 12, padding: "12px 16px" }}>✕ STOP</button>
+            <button onClick={stop} style={{ background: "transparent", border: "1px solid #ef444433", borderRadius: 6, color: "#ef4444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>✕</button>
           )}
           {!running && Object.keys(layerOutputs).length > 0 && (
-            <button onClick={clear} style={{ background: "transparent", border: "1px solid #1a1a2e", borderRadius: 6, color: "#444", fontFamily: "'JetBrains Mono',monospace", fontSize: 12, padding: "12px 16px" }}>✕ CLEAR</button>
+            <button onClick={clear} style={{ background: "transparent", border: "1px solid #1a1a2e", borderRadius: 6, color: "#444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>✕</button>
           )}
         </div>
 
@@ -582,7 +947,7 @@ export default function App() {
 
       <div style={{ borderTop: "1px solid #0f0f1e", padding: "16px 20px", textAlign: "center" }}>
         <div style={{ fontSize: 8, color: "#1a1a2e", letterSpacing: "0.2em" }}>
-          THINK → PARSE → GROUND → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE
+          THINK → PARSE → GROUND → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION
         </div>
       </div>
     </div>
