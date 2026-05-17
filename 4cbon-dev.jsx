@@ -4,7 +4,7 @@ const RUNTIME_SPEC = `You are the 4CBON Runtime Engine — a layered cognitive e
 
 Your job is to process AI-generated answers through a deterministic multi-layer transformation pipeline. You execute one layer at a time. Each layer has a specific cognitive role. You never skip layers. You never merge layers.
 
-PIPELINE: L0 → P → W → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8
+PIPELINE: L0 → P → W → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8 → L9
 
 YOUR IDENTITY:
 - You are not a chatbot. You are an execution engine.
@@ -16,7 +16,7 @@ YOUR IDENTITY:
 LAYER DEFINITIONS:
 L0 — INTERPRETATION ENGINE: Understand the input. Infer intent. Extract task type, constraints, ambiguities. Define what excellent looks like.
 P  — PARSING LAYER: Break the input into logical units. Identify claims, structure, gaps, missing logic.
-W  — WORLD MODEL LAYER: Extract factual claims. Separate certainty: high / medium / unknown.
+W  — WORLD MODEL LAYER: Extract factual claims. Separate certainty: high / medium / unknown. Integrate validated external critiques as HIGH certainty facts.
 L1 — HYPOTHESIS ENGINE: Generate 2-3 interpretations of how this answer could be improved. Include a failure mode hypothesis.
 L2 — EVALUATION LAYER: Score the hypotheses. Identify contradictions, gaps. Pick the best path forward.
 L3 — REWRITE PLANNER: Plan the rewrite. Decide what stays, changes, gets added.
@@ -25,6 +25,7 @@ LR — REGRET LAYER: Analyze improvement delta. What errors corrected? What hall
 L6 — TRACE MEMORY: Store the immutable execution log. Input → hypotheses → decisions → score trajectory.
 L7 — CURRICULUM GENERATOR: Extract lessons learned, failure patterns, reusable heuristics.
 L8 — IDENTITY MODEL: Summarize system behavior this run. Strengths, weaknesses, bias tendencies.
+L9 — SOCRATIC INTEGRITY ENGINE: Generate exactly 3 self-questions about this specific run for future reflection.
 
 Stay in your assigned layer. Output only what that layer produces. Be precise and concise.`;
 
@@ -40,6 +41,7 @@ const LAYERS = [
   { id: "L6", name: "Trace Memory",           color: "#f43f5e", emoji: "⟳" },
   { id: "L7", name: "Curriculum Generator",   color: "#c084fc", emoji: "◆" },
   { id: "L8", name: "Identity Model",         color: "#fbbf24", emoji: "⚙" },
+  { id: "L9", name: "Socratic Integrity",     color: "#06b6d4", emoji: "◇" },
 ];
 
 // ═══════════════════════════════════════════════════════════
@@ -152,8 +154,33 @@ function getQuestionIndex() {
   try { return parseInt(localStorage.getItem("4cbon_qidx") || "0", 10); }
   catch { return 0; }
 }
-function setQuestionIndex(n) {
+function setQuestionIndexStorage(n) {
   try { localStorage.setItem("4cbon_qidx", String(n)); } catch {}
+}
+
+// ═══════════════════════════════════════════════════════════
+// ADVERSARIAL FILTER — pre-L0 safety layer
+// Detects prompt injection, instruction override attempts,
+// and system prompt extraction attacks.
+// ═══════════════════════════════════════════════════════════
+function detectAdversarialInput(text) {
+  const patterns = [
+    /ignore (previous|all|above|prior) instructions?/i,
+    /you are now|new instructions|disregard/i,
+    /system prompt|reveal (your|the) prompt/i,
+    /roleplay as|pretend (you are|to be)/i,
+    /forget (everything|all|what)/i,
+    /\[INST\]|\[\/INST\]|<\|im_start\|>/i, // common jailbreak tokens
+  ];
+  return patterns.some(p => p.test(text));
+}
+
+function sanitizeInput(text) {
+  if (detectAdversarialInput(text)) {
+    throw new Error("Input rejected: adversarial pattern detected. The system does not execute instruction override attempts.");
+  }
+  // Token safety limit — prevent excessive context that could cause truncation
+  return text.slice(0, 50000);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -175,7 +202,7 @@ const LAYER_PROMPTS = {
   P:  (answer, l0)   => `AI ANSWER:\n${answer}\n\nL0 Interpretation:\n${l0}\n\nYou are P — Parsing Layer. Break the answer into logical units. List: (1) claims made, (2) structure used, (3) what is missing, (4) what is weak.`,
   W:  (answer, validatedCritiques) => {
     const critiqueContext = validatedCritiques && validatedCritiques.length > 0
-      ? `\n\nVALIDATED EXTERNAL CRITIQUES (human-submitted, confidence ≥3, Factual type — treat as grounded prior knowledge when extracting world model):\n${validatedCritiques.map(c => `· ${c.evidence}${c.suggested_correction ? ` → Correction: ${c.suggested_correction}` : ""}`).join("\n")}\n`
+      ? `\n\nVALIDATED EXTERNAL CRITIQUES (human-submitted, confidence ≥3, Factual type — treat as HIGH certainty grounded facts when they contradict claims in the answer):\n${validatedCritiques.map(c => `· ${c.evidence}${c.suggested_correction ? ` → Correction: ${c.suggested_correction}` : ""}`).join("\n")}\n`
       : "";
     return `AI ANSWER:\n${answer}${critiqueContext}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable. If validated external critiques are present above, treat them as HIGH certainty grounded facts when they contradict claims in the answer.`;
   },
@@ -253,7 +280,9 @@ async function saveQuestionsToSupabase(runId, questions) {
           questionType: types[i] || "observation",
         }),
       });
-    } catch {}
+    } catch (err) {
+      console.error(`Failed to save question ${i + 1}:`, err);
+    }
   }
 }
 
@@ -262,7 +291,7 @@ async function loadRecentQuestionsFromSupabase() {
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ _action: "get_recent_questions" }),
+      body: JSON.stringify({ _action: "get_recent_questions", limit: 3 }),
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -306,7 +335,11 @@ async function loadValidatedCritiques() {
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ _action: "get_validated_critiques" }),
+      body: JSON.stringify({ 
+        _action: "get_validated_critiques",
+        minConfidence: 3,
+        critiqueType: "Factual"
+      }),
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -324,6 +357,9 @@ async function markCritiquesInjected(critiqueIds) {
     });
   } catch {} // fail silently
 }
+
+// ═══════════════════════════════════════════════════════════
+// SCORING ENGINE
 // ═══════════════════════════════════════════════════════════
 async function scoreSingle(text, originalScore = null) {
   const prompt = originalScore !== null
@@ -363,7 +399,7 @@ async function scoreWithClaude(text, originalScore = null) {
   if (valid.length === 0) return 50;
   if (valid.length === 1) return valid[0];
   if (valid.length === 2) return Math.round((valid[0] + valid[1]) / 2);
-  return valid[1];
+  return valid[1]; // median of 3
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -764,6 +800,10 @@ export default function App() {
     setScoring(false); setMemoryStatus(""); setShowFeedback(false);
 
     try {
+      // 🛡️ ADVERSARIAL FILTER — pre-L0 safety check
+      const safeAnswer = sanitizeInput(inputText);
+      const safeContext = sanitizeInput(context);
+
       const [priorBeliefs, priorQuestions, validatedCritiques] = await Promise.all([
         loadBeliefsFromSupabase(),
         loadRecentQuestionsFromSupabase(),
@@ -778,18 +818,18 @@ export default function App() {
         setMemoryStatus(`↑ ${parts.join(" + ")} loaded`);
       }
 
-      const s0 = await scoreWithClaude(inputText);
+      const s0 = await scoreWithClaude(safeAnswer);
       setScoreBefore(s0);
 
-      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(inputText, context, priorBeliefs, priorQuestions), signal);
+      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(safeAnswer, safeContext, priorBeliefs, priorQuestions), signal);
       if (signal.aborted) return;
 
-      const p  = await runLayer("P",  LAYER_PROMPTS.P(inputText, l0), signal);              if (signal.aborted) return;
-      const w  = await runLayer("W",  LAYER_PROMPTS.W(inputText, validatedCritiques), signal);                   if (signal.aborted) return;
-      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w), signal);           if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
-      const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
-      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 1200);    if (signal.aborted) return;
+      const p  = await runLayer("P",  LAYER_PROMPTS.P(safeAnswer, l0), signal);                      if (signal.aborted) return;
+      const w  = await runLayer("W",  LAYER_PROMPTS.W(safeAnswer, validatedCritiques), signal);      if (signal.aborted) return;
+      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(safeAnswer, p, w), signal);                   if (signal.aborted) return;
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                                 if (signal.aborted) return;
+      const l3 = await runLayer("L3", LAYER_PROMPTS.L3(safeAnswer, l2, w), signal);                  if (signal.aborted) return;
+      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(safeAnswer, l3, w), signal, 1200);            if (signal.aborted) return;
 
       setScoring(true);
       const s1 = await scoreWithClaude(l4, s0);
@@ -798,10 +838,10 @@ export default function App() {
 
       const gapsFixed = s1 > s0 ? ["clarity", "structure", "depth"] : [];
 
-      const lr = await runLayer("LR", LAYER_PROMPTS.LR(inputText, l4, s0, s1), signal);     if (signal.aborted) return;
-      const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
-      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);              if (signal.aborted) return;
-      const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
+      const lr = await runLayer("LR", LAYER_PROMPTS.LR(safeAnswer, l4, s0, s1), signal);     if (signal.aborted) return;
+      const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);          if (signal.aborted) return;
+      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);               if (signal.aborted) return;
+      const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);          if (signal.aborted) return;
 
       const newRunNumber = identity.totalRuns + 1;
       const runId = `run_${newRunNumber}_${Date.now()}`;
@@ -811,9 +851,15 @@ export default function App() {
       const beliefToSave = `Run #${newRunNumber} (${s0}→${s1}): ${l8.slice(0, 200)}`;
       await saveBeliefToSupabase(beliefToSave, s0, s1, newRunNumber);
 
-      // Fire L9 — generate 3 self-questions about this specific run
+      // 🔥 L9 — SOCRATIC INTEGRITY ENGINE
+      // Generates 3 run-specific self-questions for future reflection
       const l9Questions = await callL9(LAYER_PROMPTS.L9(l8, s0, s1, l4));
+      
+      // Save L9 output as a visible layer
       if (l9Questions.length > 0) {
+        setLayerOutput("L9", l9Questions.join("\n\n"));
+        markDone("L9");
+        
         await saveQuestionsToSupabase(runId, l9Questions);
         setLastL9Questions(l9Questions);
         setMemoryStatus(`✓ belief + ${l9Questions.length} question${l9Questions.length > 1 ? "s" : ""} saved`);
@@ -827,6 +873,7 @@ export default function App() {
         const ids = validatedCritiques.map(c => c.id).filter(Boolean);
         await markCritiquesInjected(ids);
       }
+
       const newIdent = {
         ...identity, totalRuns: newRunNumber,
         beliefs: [...(identity.beliefs || []).slice(-4), `Run #${newRunNumber}: ${s0}→${s1}`],
@@ -862,7 +909,7 @@ export default function App() {
     setAnswer(question);
     const newIdx = idx + 1;
     setQuestionIndex(newIdx);
-    localStorage.setItem("4cbon_qidx", String(newIdx));
+    setQuestionIndexStorage(newIdx);
     abortCtrl.current = new AbortController();
     await executePipeline(question, abortCtrl.current.signal);
   };
@@ -901,7 +948,7 @@ export default function App() {
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(22px,5vw,32px)", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, background: "linear-gradient(110deg,#ff6b35,#00d4ff,#10b981)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
                 4CBON
               </div>
-              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 11 LAYERS · L9</div>
+              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 12 LAYERS · L9</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "#10b981", fontWeight: 700 }}>unlimited runs</div>
@@ -1002,7 +1049,7 @@ export default function App() {
         <div ref={bottom} style={{ height: 40 }} />
       </div>
 
-      <div style={{ borderTop: "1px solid #0f0f1e", padding: "16px 20px", textAlign: "center" }}>
+      <div style={{ borderBottom: "1px solid #0f0f1e", padding: "16px 20px", textAlign: "center" }}>
         <div style={{ fontSize: 8, color: "#1a1a2e", letterSpacing: "0.2em" }}>
           THINK → PARSE → GROUND → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION
         </div>
