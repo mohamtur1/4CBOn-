@@ -781,7 +781,7 @@ export default function App() {
   }, [layerOutputs, activeLayer, scoring, showFeedback]);
 
   const setLayerOutput = (id, text) => setOutputs(prev => ({ ...prev, [id]: text }));
-  const markDone = (id) => { setDone(prev => [...prev, id]); setActive(null); setStreaming(null); };
+  consconst markDone = (id) => { setDone(prev => [...prev, id]); setActive(null); setStreaming(prev => prev === id ? null : prev); };
 
   const runLayer = async (layerId, prompt, signal, maxTokens = 800) => {
     const layer = LAYERS.find(l => l.id === layerId);
