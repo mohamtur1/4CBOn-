@@ -4,7 +4,7 @@ const RUNTIME_SPEC = `You are the 4CBON Runtime Engine — a layered cognitive e
 
 Your job is to process AI-generated answers through a deterministic multi-layer transformation pipeline. You execute one layer at a time. Each layer has a specific cognitive role. You never skip layers. You never merge layers.
 
-PIPELINE: L0 → P → W → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8 → L9
+PIPELINE: L0 → P → W → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8
 
 YOUR IDENTITY:
 - You are not a chatbot. You are an execution engine.
@@ -25,7 +25,6 @@ LR — REGRET LAYER: Analyze improvement delta. What errors corrected? What hall
 L6 — TRACE MEMORY: Store the immutable execution log. Input → hypotheses → decisions → score trajectory.
 L7 — CURRICULUM GENERATOR: Extract lessons learned, failure patterns, reusable heuristics.
 L8 — IDENTITY MODEL: Summarize system behavior this run. Strengths, weaknesses, bias tendencies.
-L9 — SOCRATIC INTEGRITY ENGINE: Generate exactly 3 self-questions about this specific run for future reflection.
 
 Stay in your assigned layer. Output only what that layer produces. Be precise and concise.`;
 
@@ -41,7 +40,6 @@ const LAYERS = [
   { id: "L6", name: "Trace Memory",           color: "#f43f5e", emoji: "⟳" },
   { id: "L7", name: "Curriculum Generator",   color: "#c084fc", emoji: "◆" },
   { id: "L8", name: "Identity Model",         color: "#fbbf24", emoji: "⚙" },
-  { id: "L9", name: "Socratic Integrity",     color: "#06b6d4", emoji: "◇" },
 ];
 
 // ═══════════════════════════════════════════════════════════
@@ -154,40 +152,12 @@ function getQuestionIndex() {
   try { return parseInt(localStorage.getItem("4cbon_qidx") || "0", 10); }
   catch { return 0; }
 }
-function setQuestionIndexStorage(n) {
+function setQuestionIndex(n) {
   try { localStorage.setItem("4cbon_qidx", String(n)); } catch {}
 }
 
 // ═══════════════════════════════════════════════════════════
-// ADVERSARIAL FILTER — pre-L0 safety layer
-// Detects prompt injection, instruction override attempts,
-// and system prompt extraction attacks.
-// ═══════════════════════════════════════════════════════════
-function detectAdversarialInput(text) {
-  const patterns = [
-    /ignore (previous|all|above|prior) instructions?/i,
-    /you are now|new instructions|disregard/i,
-    /system prompt|reveal (your|the) prompt/i,
-    /roleplay as|pretend (you are|to be)/i,
-    /forget (everything|all|what)/i,
-    /\[INST\]|\[\/INST\]|<\|im_start\|>/i, // common jailbreak tokens
-  ];
-  return patterns.some(p => p.test(text));
-}
-
-function sanitizeInput(text) {
-  if (detectAdversarialInput(text)) {
-    throw new Error("Input rejected: adversarial pattern detected. The system does not execute instruction override attempts.");
-  }
-  // Token safety limit — prevent excessive context that could cause truncation
-  return text.slice(0, 50000);
-}
-
-// ═══════════════════════════════════════════════════════════
 // LAYER PROMPTS
-// L0 receives both prior beliefs (what the system learned) and
-// prior self-questions (what the system was still wondering about)
-// so each run starts wiser than the last.
 // ═══════════════════════════════════════════════════════════
 const LAYER_PROMPTS = {
   L0: (answer, ctx, priorBeliefs, priorQuestions) => {
@@ -238,9 +208,7 @@ const MODEL = "claude-haiku-4-5-20251001";
 const API_ENDPOINT = "/api/claude";
 
 // ═══════════════════════════════════════════════════════════
-// SUPABASE MEMORY — reads and writes beliefs and questions
-// through the secure server proxy. The database key never
-// touches the browser.
+// SUPABASE MEMORY
 // ═══════════════════════════════════════════════════════════
 async function loadBeliefsFromSupabase() {
   try {
@@ -280,9 +248,7 @@ async function saveQuestionsToSupabase(runId, questions) {
           questionType: types[i] || "observation",
         }),
       });
-    } catch (err) {
-      console.error(`Failed to save question ${i + 1}:`, err);
-    }
+    } catch {}
   }
 }
 
@@ -291,7 +257,7 @@ async function loadRecentQuestionsFromSupabase() {
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ _action: "get_recent_questions", limit: 3 }),
+      body: JSON.stringify({ _action: "get_recent_questions" }),
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -299,9 +265,6 @@ async function loadRecentQuestionsFromSupabase() {
   } catch { return []; }
 }
 
-// Saves user feedback to the Supabase feedback table.
-// injected: false means the credibility parser hasn't routed
-// this critique into W or L3 yet — that happens in a future build.
 async function saveFeedbackToSupabase(evidence, confidence, critiqueType, suggestedCorrection, runId) {
   try {
     await fetch(API_ENDPOINT, {
@@ -320,26 +283,14 @@ async function saveFeedbackToSupabase(evidence, confidence, critiqueType, sugges
 }
 
 // ═══════════════════════════════════════════════════════════
-// CREDIBILITY PARSER — the bridge between external ground truth
-// and the pipeline's world model layer.
-//
-// Before each run, this reads Supabase for any Factual critiques
-// with confidence ≥ 3 that haven't been injected yet. It returns
-// them to be prepended to the W layer prompt as validated context.
-// After the run, it marks those rows as injected so they don't
-// repeat on every future run — each critique is used once, then
-// becomes part of the system's accumulated knowledge.
+// CREDIBILITY PARSER
 // ═══════════════════════════════════════════════════════════
 async function loadValidatedCritiques() {
   try {
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        _action: "get_validated_critiques",
-        minConfidence: 3,
-        critiqueType: "Factual"
-      }),
+      body: JSON.stringify({ _action: "get_validated_critiques" }),
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -355,11 +306,69 @@ async function markCritiquesInjected(critiqueIds) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ _action: "mark_critiques_injected", ids: critiqueIds }),
     });
-  } catch {} // fail silently
+  } catch {}
 }
 
 // ═══════════════════════════════════════════════════════════
-// SCORING ENGINE
+// AI FEEDBACK GENERATOR
+// Sends the original answer and L4 rewrite to Claude and gets
+// back a structured critique that pre-fills the feedback fields.
+// The human reviews and approves before submitting.
+// ═══════════════════════════════════════════════════════════
+async function generateAIFeedback(originalAnswer, l4Output) {
+  const prompt = `You are analyzing a pipeline rewrite. The pipeline took an AI-generated answer and produced an improved version. Your job is to identify what the rewrite STILL got wrong or missed.
+
+ORIGINAL ANSWER:
+${originalAnswer.slice(0, 1000)}
+
+L4 REWRITE (the improved version):
+${l4Output.slice(0, 1000)}
+
+Analyze the L4 rewrite critically. What did it get wrong, miss, or still fail to correct from the original? Focus on the most important remaining error or gap.
+
+Reply with ONLY this JSON structure — no other text:
+{
+  "evidence": "specific description of what L4 got wrong or missed (2-3 sentences)",
+  "suggested_correction": "what it should have said instead (1-2 sentences, or empty string if none)",
+  "confidence": 3,
+  "critique_type": "Factual"
+}
+
+Rules:
+- evidence must be specific to THIS rewrite, not generic
+- confidence must be 2, 3, 4, or 5 (integer)
+- critique_type must be exactly "Factual", "Stylistic", or "Uncertain"
+- if the rewrite is genuinely good with no significant errors, set confidence to 2 and note what minor thing could improve`;
+
+  try {
+    const res = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 400,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const text = (data?.content?.[0]?.text || "").trim();
+    // Strip any markdown fences if present
+    const clean = text.replace(/^```json?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const parsed = JSON.parse(clean);
+    return {
+      evidence: parsed.evidence || "",
+      suggested_correction: parsed.suggested_correction || "",
+      confidence: Math.min(5, Math.max(2, parseInt(parsed.confidence, 10) || 3)),
+      critique_type: ["Factual", "Stylistic", "Uncertain"].includes(parsed.critique_type)
+        ? parsed.critique_type
+        : "Factual",
+    };
+  } catch { return null; }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SCORER — 3-call median
 // ═══════════════════════════════════════════════════════════
 async function scoreSingle(text, originalScore = null) {
   const prompt = originalScore !== null
@@ -399,7 +408,7 @@ async function scoreWithClaude(text, originalScore = null) {
   if (valid.length === 0) return 50;
   if (valid.length === 1) return valid[0];
   if (valid.length === 2) return Math.round((valid[0] + valid[1]) / 2);
-  return valid[1]; // median of 3
+  return valid[1];
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -452,7 +461,6 @@ async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTo
   return full;
 }
 
-// L9 is non-streaming — it just returns 3 short questions
 async function callL9(prompt) {
   try {
     const res = await fetch(API_ENDPOINT, {
@@ -472,7 +480,7 @@ async function callL9(prompt) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// LOCAL IDENTITY — browser backup for run count display
+// LOCAL IDENTITY
 // ═══════════════════════════════════════════════════════════
 function loadIdentity() {
   try { return JSON.parse(localStorage.getItem("4cbon_identity") || "null") || { totalRuns: 0, beliefs: [] }; }
@@ -548,7 +556,7 @@ function ScoreBar({ before, after, scoring }) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// LAYER CARD
+// LAYER CARD — with working copy button
 // ═══════════════════════════════════════════════════════════
 function LayerCard({ layer, content, streaming }) {
   const [copied, setCopied] = useState(false);
@@ -628,19 +636,36 @@ function PipelineBar({ activeLayer, completedLayers }) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// FEEDBACK BOX — appears after every completed run.
-// This is how external ground truth enters the system.
-// Factual critiques route to W layer on future runs.
-// Stylistic critiques route to L3.
-// Uncertain critiques are held for manual review.
+// FEEDBACK BOX — with AI feedback generator
+// The Generate button sends L4's output to Claude and gets back
+// a structured critique that pre-fills the form fields.
+// Human reviews and approves before submitting.
 // ═══════════════════════════════════════════════════════════
-function FeedbackBox({ runId, onClose }) {
-  const [evidence, setEvidence]       = useState("");
-  const [confidence, setConfidence]   = useState(3);
+function FeedbackBox({ runId, originalAnswer, l4Output, onClose }) {
+  const [evidence, setEvidence]         = useState("");
+  const [confidence, setConfidence]     = useState(3);
   const [critiqueType, setCritiqueType] = useState("Factual");
-  const [correction, setCorrection]   = useState("");
-  const [submitting, setSubmitting]   = useState(false);
-  const [saved, setSaved]             = useState(false);
+  const [correction, setCorrection]     = useState("");
+  const [submitting, setSubmitting]     = useState(false);
+  const [generating, setGenerating]     = useState(false);
+  const [saved, setSaved]               = useState(false);
+  const [generateError, setGenerateError] = useState("");
+
+  const generate = async () => {
+    if (!l4Output) { setGenerateError("No L4 output available to analyze."); return; }
+    setGenerating(true);
+    setGenerateError("");
+    const result = await generateAIFeedback(originalAnswer, l4Output);
+    setGenerating(false);
+    if (!result) {
+      setGenerateError("Generation failed — fill in manually or try again.");
+      return;
+    }
+    setEvidence(result.evidence);
+    setCorrection(result.suggested_correction);
+    setConfidence(result.confidence);
+    setCritiqueType(result.critique_type);
+  };
 
   const submit = async () => {
     if (!evidence.trim() || confidence < 2) return;
@@ -662,9 +687,37 @@ function FeedbackBox({ runId, onClose }) {
 
   return (
     <div style={{ margin: "24px 0", padding: "20px", background: "#06060f", border: "1px solid #1a1a2e", borderLeft: "3px solid #10b981", borderRadius: 8 }}>
-      <div style={{ fontSize: 9, color: "#10b981", letterSpacing: "0.2em", marginBottom: 14 }}>
-        FEEDBACK — TEACH THE SYSTEM
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 9, color: "#10b981", letterSpacing: "0.2em" }}>
+          FEEDBACK — TEACH THE SYSTEM
+        </div>
+        {/* AI Generate button */}
+        <button
+          onClick={generate}
+          disabled={generating || !l4Output}
+          style={{
+            background: generating ? "#0a0a14" : "linear-gradient(135deg,#7c3aed,#38bdf8)",
+            border: `1px solid ${generating ? "#1a1a2e" : "#7c3aed44"}`,
+            borderRadius: 6,
+            color: generating ? "#444" : "#030308",
+            fontFamily: "monospace", fontWeight: 900, fontSize: 9,
+            padding: "6px 12px", cursor: generating ? "default" : "pointer",
+            letterSpacing: "0.08em",
+          }}
+        >
+          {generating ? "⟳ generating..." : "⟳ GENERATE FEEDBACK"}
+        </button>
       </div>
+
+      {generateError && (
+        <div style={{ fontSize: 10, color: "#ef4444", marginBottom: 10, fontFamily: "monospace" }}>{generateError}</div>
+      )}
+
+      {generating && (
+        <div style={{ fontSize: 10, color: "#7c3aed", marginBottom: 12, fontFamily: "monospace" }}>
+          Analyzing L4 output and generating critique...
+        </div>
+      )}
 
       <div style={{ marginBottom: 12 }}>
         <label style={{ fontSize: 9, color: "#444", letterSpacing: "0.15em", display: "block", marginBottom: 6 }}>
@@ -673,7 +726,7 @@ function FeedbackBox({ runId, onClose }) {
         <textarea
           value={evidence}
           onChange={e => setEvidence(e.target.value)}
-          placeholder="Be specific. What did the rewrite get wrong or miss entirely?"
+          placeholder="Tap GENERATE FEEDBACK to auto-fill, or write manually. Be specific about what the rewrite got wrong or missed."
           rows={3}
           style={{ width: "100%", background: "#08080f", border: "1px solid #1a1a2e", borderRadius: 6, color: "#c0c0e0", fontFamily: "monospace", fontSize: 12, padding: "10px 12px", lineHeight: 1.6 }}
         />
@@ -773,6 +826,9 @@ export default function App() {
   const [lastL9Questions, setLastL9Questions] = useState([]);
   const [showFeedback, setShowFeedback]   = useState(false);
   const [currentRunId, setCurrentRunId]   = useState("");
+  const [lastL4Output, setLastL4Output]   = useState("");
+  const [lastAnswer, setLastAnswer]       = useState("");
+  const [copyAllDone, setCopyAllDone]     = useState(false);
   const abortCtrl = useRef(null);
   const bottom = useRef(null);
 
@@ -781,7 +837,13 @@ export default function App() {
   }, [layerOutputs, activeLayer, scoring, showFeedback]);
 
   const setLayerOutput = (id, text) => setOutputs(prev => ({ ...prev, [id]: text }));
-  consconst markDone = (id) => { setDone(prev => [...prev, id]); setActive(null); setStreaming(prev => prev === id ? null : prev); };
+
+  // Fixed markDone — scoped streaming clear prevents L9 from erasing L4
+  const markDone = (id) => {
+    setDone(prev => [...prev, id]);
+    setActive(null);
+    setStreaming(prev => prev === id ? null : prev);
+  };
 
   const runLayer = async (layerId, prompt, signal, maxTokens = 800) => {
     const layer = LAYERS.find(l => l.id === layerId);
@@ -794,16 +856,31 @@ export default function App() {
     return result;
   };
 
+  // Copy all layer outputs as a formatted report
+  const copyAll = () => {
+    const lines = [];
+    lines.push("4CBON PIPELINE RUN REPORT");
+    lines.push(`Score: ${scoreBefore} → ${scoreAfter}`);
+    lines.push("═".repeat(50));
+    LAYERS.forEach(layer => {
+      const content = layerOutputs[layer.id];
+      if (content) {
+        lines.push(`\n${layer.id} — ${layer.name}\n${"─".repeat(40)}\n${content}`);
+      }
+    });
+    navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      setCopyAllDone(true);
+      setTimeout(() => setCopyAllDone(false), 2000);
+    });
+  };
+
   const executePipeline = async (inputText, signal) => {
     setRunning(true); setError(""); setOutputs({}); setDone([]);
     setActive(null); setStreaming(null); setScoreBefore(null); setScoreAfter(null);
     setScoring(false); setMemoryStatus(""); setShowFeedback(false);
+    setLastL4Output(""); setLastAnswer(inputText);
 
     try {
-      // 🛡️ ADVERSARIAL FILTER — pre-L0 safety check
-      const safeAnswer = sanitizeInput(inputText);
-      const safeContext = sanitizeInput(context);
-
       const [priorBeliefs, priorQuestions, validatedCritiques] = await Promise.all([
         loadBeliefsFromSupabase(),
         loadRecentQuestionsFromSupabase(),
@@ -818,18 +895,21 @@ export default function App() {
         setMemoryStatus(`↑ ${parts.join(" + ")} loaded`);
       }
 
-      const s0 = await scoreWithClaude(safeAnswer);
+      const s0 = await scoreWithClaude(inputText);
       setScoreBefore(s0);
 
-      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(safeAnswer, safeContext, priorBeliefs, priorQuestions), signal);
+      const l0 = await runLayer("L0", LAYER_PROMPTS.L0(inputText, context, priorBeliefs, priorQuestions), signal);
       if (signal.aborted) return;
 
-      const p  = await runLayer("P",  LAYER_PROMPTS.P(safeAnswer, l0), signal);                      if (signal.aborted) return;
-      const w  = await runLayer("W",  LAYER_PROMPTS.W(safeAnswer, validatedCritiques), signal);      if (signal.aborted) return;
-      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(safeAnswer, p, w), signal);                   if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                                 if (signal.aborted) return;
-      const l3 = await runLayer("L3", LAYER_PROMPTS.L3(safeAnswer, l2, w), signal);                  if (signal.aborted) return;
-      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(safeAnswer, l3, w), signal, 1200);            if (signal.aborted) return;
+      const p  = await runLayer("P",  LAYER_PROMPTS.P(inputText, l0), signal);              if (signal.aborted) return;
+      const w  = await runLayer("W",  LAYER_PROMPTS.W(inputText, validatedCritiques), signal); if (signal.aborted) return;
+      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w), signal);           if (signal.aborted) return;
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
+      const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
+      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 1200);    if (signal.aborted) return;
+
+      // Store L4 output for AI feedback generator
+      setLastL4Output(l4);
 
       setScoring(true);
       const s1 = await scoreWithClaude(l4, s0);
@@ -838,28 +918,28 @@ export default function App() {
 
       const gapsFixed = s1 > s0 ? ["clarity", "structure", "depth"] : [];
 
-      const lr = await runLayer("LR", LAYER_PROMPTS.LR(safeAnswer, l4, s0, s1), signal);     if (signal.aborted) return;
-      const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);          if (signal.aborted) return;
-      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);               if (signal.aborted) return;
-      const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);          if (signal.aborted) return;
+      const lr = await runLayer("LR", LAYER_PROMPTS.LR(inputText, l4, s0, s1), signal);     if (signal.aborted) return;
+      const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
+      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);              if (signal.aborted) return;
+      const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
 
       const newRunNumber = identity.totalRuns + 1;
       const runId = `run_${newRunNumber}_${Date.now()}`;
       setCurrentRunId(runId);
 
-      // Save L8 belief to Supabase
+      // Save belief to Supabase
       const beliefToSave = `Run #${newRunNumber} (${s0}→${s1}): ${l8.slice(0, 200)}`;
       await saveBeliefToSupabase(beliefToSave, s0, s1, newRunNumber);
 
-      // 🔥 L9 — SOCRATIC INTEGRITY ENGINE
-      // Generates 3 run-specific self-questions for future reflection
+      // Mark validated critiques as injected
+      if (validatedCritiques.length > 0) {
+        const ids = validatedCritiques.map(c => c.id).filter(Boolean);
+        await markCritiquesInjected(ids);
+      }
+
+      // Fire L9 — generate 3 self-questions about this run
       const l9Questions = await callL9(LAYER_PROMPTS.L9(l8, s0, s1, l4));
-      
-      // Save L9 output as a visible layer
       if (l9Questions.length > 0) {
-        setLayerOutput("L9", l9Questions.join("\n\n"));
-        markDone("L9");
-        
         await saveQuestionsToSupabase(runId, l9Questions);
         setLastL9Questions(l9Questions);
         setMemoryStatus(`✓ belief + ${l9Questions.length} question${l9Questions.length > 1 ? "s" : ""} saved`);
@@ -867,13 +947,7 @@ export default function App() {
         setMemoryStatus("✓ belief saved to memory");
       }
 
-      // Mark validated critiques as injected so they don't repeat on future runs.
-      // Each critique trains the system once, then becomes part of its accumulated knowledge.
-      if (validatedCritiques.length > 0) {
-        const ids = validatedCritiques.map(c => c.id).filter(Boolean);
-        await markCritiquesInjected(ids);
-      }
-
+      // Update local backup
       const newIdent = {
         ...identity, totalRuns: newRunNumber,
         beliefs: [...(identity.beliefs || []).slice(-4), `Run #${newRunNumber}: ${s0}→${s1}`],
@@ -881,14 +955,14 @@ export default function App() {
       setIdentity(newIdent);
       saveIdentity(newIdent);
 
-      // Show feedback box — the external ground truth entry point
+      // Show feedback box
       setShowFeedback(true);
 
     } catch (e) {
       if (e.name === "AbortError") return;
       setError(e.message);
     } finally {
-      setRunning(false); setActive(null); setStreaming(null); setScoring(false);
+      setRunning(false); setActive(null); setScoring(false);
     }
   };
 
@@ -902,14 +976,14 @@ export default function App() {
     if (running) return;
     const idx = getQuestionIndex();
     if (idx >= QUESTION_BANK.length) {
-      setError("All 100 questions completed. The system has worked through the full curriculum.");
+      setError("All 100 questions completed.");
       return;
     }
     const question = QUESTION_BANK[idx];
     setAnswer(question);
     const newIdx = idx + 1;
     setQuestionIndex(newIdx);
-    setQuestionIndexStorage(newIdx);
+    localStorage.setItem("4cbon_qidx", String(newIdx));
     abortCtrl.current = new AbortController();
     await executePipeline(question, abortCtrl.current.signal);
   };
@@ -922,9 +996,11 @@ export default function App() {
   const clear = () => {
     setOutputs({}); setDone([]); setScoreBefore(null); setScoreAfter(null);
     setError(""); setScoring(false); setMemoryStatus(""); setShowFeedback(false);
+    setLastL4Output(""); setCopyAllDone(false);
   };
 
   const questionsRemaining = QUESTION_BANK.length - questionIndex;
+  const hasOutput = Object.keys(layerOutputs).length > 0;
 
   return (
     <div style={{ minHeight: "100vh", background: "#03030a", color: "#c0c0e0", fontFamily: "'JetBrains Mono', 'Courier New', monospace" }}>
@@ -948,7 +1024,7 @@ export default function App() {
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(22px,5vw,32px)", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, background: "linear-gradient(110deg,#ff6b35,#00d4ff,#10b981)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
                 4CBON
               </div>
-              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 12 LAYERS · L9</div>
+              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 11 LAYERS · L9</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "#10b981", fontWeight: 700 }}>unlimited runs</div>
@@ -1007,21 +1083,28 @@ export default function App() {
           />
         </div>
 
-        {/* BUTTONS — manual run, autofeeder, stop/clear */}
+        {/* BUTTON ROW */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
           <button onClick={run} disabled={running || !answer.trim()}
             style={{ flex: 2, background: running ? "#0a0a14" : "linear-gradient(135deg,#ff6b35,#00d4ff)", border: `1px solid ${running ? "#1a1a2e" : "#ff6b3544"}`, borderRadius: 6, color: running ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
             {running ? "⟳ RUNNING..." : "▶ RUN PIPELINE"}
           </button>
+
           <button onClick={runNextQuestion} disabled={running || questionIndex >= QUESTION_BANK.length}
             style={{ flex: 3, background: running || questionIndex >= QUESTION_BANK.length ? "#0a0a14" : "linear-gradient(135deg,#7c3aed,#38bdf8)", border: `1px solid ${running || questionIndex >= QUESTION_BANK.length ? "#1a1a2e" : "#7c3aed44"}`, borderRadius: 6, color: running || questionIndex >= QUESTION_BANK.length ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
             {questionIndex >= QUESTION_BANK.length ? "✓ ALL DONE" : `⟫ Q${questionIndex + 1} AUTO`}
           </button>
+
           {running && (
             <button onClick={stop} style={{ background: "transparent", border: "1px solid #ef444433", borderRadius: 6, color: "#ef4444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>✕</button>
           )}
-          {!running && Object.keys(layerOutputs).length > 0 && (
-            <button onClick={clear} style={{ background: "transparent", border: "1px solid #1a1a2e", borderRadius: 6, color: "#444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>✕</button>
+          {!running && hasOutput && (
+            <>
+              <button onClick={copyAll} style={{ background: copyAllDone ? "#10b98122" : "transparent", border: `1px solid ${copyAllDone ? "#10b981" : "#1a1a2e"}`, borderRadius: 6, color: copyAllDone ? "#10b981" : "#444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>
+                {copyAllDone ? "✓" : "⊡"}
+              </button>
+              <button onClick={clear} style={{ background: "transparent", border: "1px solid #1a1a2e", borderRadius: 6, color: "#444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>✕</button>
+            </>
           )}
         </div>
 
@@ -1031,7 +1114,7 @@ export default function App() {
           </div>
         )}
 
-        {(running || Object.keys(layerOutputs).length > 0) && (
+        {(running || hasOutput) && (
           <PipelineBar activeLayer={activeLayer} completedLayers={completedLayers} />
         )}
 
@@ -1041,15 +1124,20 @@ export default function App() {
           <LayerCard key={layer.id} layer={layer} content={layerOutputs[layer.id] || ""} streaming={streamingLayer === layer.id} />
         ))}
 
-        {/* FEEDBACK BOX — appears after every completed run */}
+        {/* FEEDBACK BOX with AI generator */}
         {showFeedback && !running && (
-          <FeedbackBox runId={currentRunId} onClose={() => setShowFeedback(false)} />
+          <FeedbackBox
+            runId={currentRunId}
+            originalAnswer={lastAnswer}
+            l4Output={lastL4Output}
+            onClose={() => setShowFeedback(false)}
+          />
         )}
 
         <div ref={bottom} style={{ height: 40 }} />
       </div>
 
-      <div style={{ borderBottom: "1px solid #0f0f1e", padding: "16px 20px", textAlign: "center" }}>
+      <div style={{ borderTop: "1px solid #0f0f1e", padding: "16px 20px", textAlign: "center" }}>
         <div style={{ fontSize: 8, color: "#1a1a2e", letterSpacing: "0.2em" }}>
           THINK → PARSE → GROUND → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION
         </div>
