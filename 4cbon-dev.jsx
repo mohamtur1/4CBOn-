@@ -963,11 +963,7 @@ export default function App() {
 
     } catch (e) {
       if (e.name === "AbortError") return;
-      if (e.message === "DAILY_LIMIT_REACHED") {
-        setError("DAILY_LIMIT_REACHED");
-      } else {
-        setError(e.message);
-      }
+      setError(e.message);
     } finally {
       setRunning(false); setActive(null); setScoring(false);
     }
@@ -1090,7 +1086,8 @@ export default function App() {
           />
         </div>
 
-        {/* BUTTON ROW */}
+        {/* BUTTON ROW — hidden when daily limit reached */}
+        {error !== "DAILY_LIMIT_REACHED" && (
         <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
           <button onClick={run} disabled={running || !answer.trim()}
             style={{ flex: 2, background: running ? "#0a0a14" : "linear-gradient(135deg,#ff6b35,#00d4ff)", border: `1px solid ${running ? "#1a1a2e" : "#ff6b3544"}`, borderRadius: 6, color: running ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
@@ -1114,6 +1111,7 @@ export default function App() {
             </>
           )}
         </div>
+        )}
 
         {error && (
           error === "DAILY_LIMIT_REACHED" ? (
