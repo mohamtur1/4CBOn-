@@ -432,6 +432,9 @@ async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTo
 
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
+    if (res.status === 429 || e?.error === "daily_limit_reached") {
+      throw new Error("DAILY_LIMIT_REACHED");
+    }
     throw new Error(e?.error?.message || `API error ${res.status}`);
   }
 
@@ -1109,9 +1112,24 @@ export default function App() {
         </div>
 
         {error && (
-          <div style={{ background: "#1a0808", border: "1px solid #ef444433", borderLeft: "3px solid #ef4444", borderRadius: 6, padding: "12px 16px", fontSize: 12, color: "#ef4444", marginBottom: 16, fontFamily: "monospace" }}>
-            {error}
-          </div>
+          error === "DAILY_LIMIT_REACHED" ? (
+            <div style={{ margin: "16px 0", padding: "20px", background: "#0a0a14", border: "1px solid #ff6b3533", borderLeft: "3px solid #ff6b35", borderRadius: 8, textAlign: "center" }}>
+              <div style={{ fontSize: 14, color: "#ff6b35", fontWeight: 700, marginBottom: 8, fontFamily: "monospace" }}>
+                You've used your 3 free runs today
+              </div>
+              <div style={{ fontSize: 11, color: "#5a5a82", marginBottom: 16, lineHeight: 1.6 }}>
+                Upgrade for unlimited runs, cross-session memory, AI feedback generator, and L9 self-questions.
+              </div>
+              <a href="https://4175358678144.gumroad.com/l/tbphpi" style={{ display: "inline-block", background: "linear-gradient(135deg,#ff6b35,#00d4ff)", borderRadius: 6, color: "#030308", fontFamily: "monospace", fontWeight: 900, fontSize: 12, padding: "12px 24px", textDecoration: "none", letterSpacing: "0.1em" }}>
+                UPGRADE TO PRO — $9/month →
+              </a>
+              <div style={{ fontSize: 9, color: "#333", marginTop: 10, fontFamily: "monospace" }}>Resets daily at midnight · Cancel anytime</div>
+            </div>
+          ) : (
+            <div style={{ background: "#1a0808", border: "1px solid #ef444433", borderLeft: "3px solid #ef4444", borderRadius: 6, padding: "12px 16px", fontSize: 12, color: "#ef4444", marginBottom: 16, fontFamily: "monospace" }}>
+              {error}
+            </div>
+          )
         )}
 
         {(running || hasOutput) && (
