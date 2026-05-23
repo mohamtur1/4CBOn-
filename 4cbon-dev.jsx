@@ -963,7 +963,11 @@ export default function App() {
 
     } catch (e) {
       if (e.name === "AbortError") return;
-      setError(e.message);
+      if (e.message === "DAILY_LIMIT_REACHED") {
+        setError("DAILY_LIMIT_REACHED");
+      } else {
+        setError(e.message);
+      }
     } finally {
       setRunning(false); setActive(null); setScoring(false);
     }
