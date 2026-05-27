@@ -4,7 +4,7 @@ const RUNTIME_SPEC = `You are the 4CBON Runtime Engine — a layered cognitive e
 
 Your job is to process AI-generated answers through a deterministic multi-layer transformation pipeline. You execute one layer at a time. Each layer has a specific cognitive role. You never skip layers. You never merge layers.
 
-PIPELINE: L0 → P → W → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8
+PIPELINE: L0 → P → W → LX → LA → LC → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8
 
 YOUR IDENTITY:
 - You are not a chatbot. You are an execution engine.
@@ -17,6 +17,9 @@ LAYER DEFINITIONS:
 L0 — INTERPRETATION ENGINE: Understand the input. Infer intent. Extract task type, constraints, ambiguities. Define what excellent looks like.
 P  — PARSING LAYER: Break the input into logical units. Identify claims, structure, gaps, missing logic.
 W  — WORLD MODEL LAYER: Extract factual claims. Separate certainty: high / medium / unknown. Integrate validated external critiques as HIGH certainty facts.
+LX — REALITY ADJUDICATION LAYER: For every claim flagged MEDIUM or UNKNOWN by W, ask: (1) What prediction would this claim make that could be tested? (2) What would an adversary say against it? (3) What external artifact would verify or falsify it? Label each claim: FALSIFIABLE / UNFALSIFIABLE / TESTABLE-IN-PRINCIPLE. Claims that cannot answer any question get labeled UNGROUNDED. Pass this audit to L1.
+LA — ADVERSARIAL COUNTERMODEL LAYER: Actively attempt to structurally destroy the answer's core claims. Generate: (1) the strongest competing explanation, (2) hidden assumptions the answer relies on, (3) conditions under which the answer is completely wrong, (4) the simplest alternative that achieves the same goal. Ask: what would make this entire framework collapse?
+LC — COMPRESSION INTEGRITY LAYER: Hunt semantic smoothing. Detect where: (1) multiple concepts collapsed into one term, (2) metaphor replaced mechanism, (3) elegance erased uncertainty, (4) abstraction hid causality. For each detected instance, restore the distinction that was lost. Flag any term doing more epistemic work than it can justify.
 L1 — HYPOTHESIS ENGINE: Generate 2-3 interpretations of how this answer could be improved. Include a failure mode hypothesis.
 L2 — EVALUATION LAYER: Score the hypotheses. Identify contradictions, gaps. Pick the best path forward.
 L3 — REWRITE PLANNER: Plan the rewrite. Decide what stays, changes, gets added.
@@ -32,7 +35,10 @@ const LAYERS = [
   { id: "L0", name: "Interpretation Engine", color: "#ff6b35", emoji: "◎" },
   { id: "P",  name: "Parsing Layer",         color: "#a855f7", emoji: "⊞" },
   { id: "W",  name: "World Model Layer",      color: "#00d4ff", emoji: "⊕" },
-  { id: "L1", name: "Hypothesis Engine",      color: "#38bdf8", emoji: "◈" },
+  { id: "LX", name: "Reality Adjudication",    color: "#f97316", emoji: "⊛" },
+  { id: "LA", name: "Adversarial Countermodel", color: "#dc2626", emoji: "⚔" },
+  { id: "LC", name: "Compression Integrity",    color: "#0ea5e9", emoji: "⊘" },
+  { id: "L1", name: "Hypothesis Engine",        color: "#38bdf8", emoji: "◈" },
   { id: "L2", name: "Evaluation Layer",       color: "#f59e0b", emoji: "◉" },
   { id: "L3", name: "Rewrite Planner",        color: "#7c3aed", emoji: "◐" },
   { id: "L4", name: "Finalization Engine",    color: "#10b981", emoji: "★", final: true },
@@ -176,7 +182,13 @@ const LAYER_PROMPTS = {
       : "";
     return `AI ANSWER:\n${answer}${critiqueContext}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable. If validated external critiques are present above, treat them as HIGH certainty grounded facts when they contradict claims in the answer.`;
   },
-  L1: (answer, p, w) => `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses:\nH1: [strongest improvement path]\nH2: [radical reframe — question whether the framing of the answer itself is the problem, not just the content]\nH3: [failure mode — what could go wrong if used as-is]`,
+  LX: (answer, w) => `AI ANSWER:\n${answer}\n\nW WORLD MODEL:\n${w}\n\nYou are LX — Reality Adjudication Layer. For every claim labeled MEDIUM or UNKNOWN by the World Model Layer, apply three tests:\n1. PREDICTION TEST: What testable prediction does this claim make?\n2. ADVERSARY TEST: What would the strongest critic say against this claim?\n3. VERIFICATION TEST: What external artifact, data, or observation would confirm or refute it?\n\nLabel each claim:\n- FALSIFIABLE: passes at least one test\n- UNFALSIFIABLE: fails all three tests — claim is ungrounded\n- TESTABLE-IN-PRINCIPLE: no current test exists but one could be designed\n\nOutput a structured audit. Be specific. Do not pass ungrounded claims forward unchallenged.`,
+
+  LA: (answer, lx) => `AI ANSWER:\n${answer}\n\nREALITY AUDIT:\n${lx}\n\nYou are LA — Adversarial Countermodel Layer. Your job is to structurally attack the answer's core claims — not rhetorically, but architecturally.\n\nGenerate:\n1. THE STRONGEST COMPETING EXPLANATION: What alternative account explains the same facts better or more simply?\n2. HIDDEN ASSUMPTIONS: What does the answer silently rely on that it never states?\n3. COLLAPSE CONDITIONS: Under what specific conditions is the answer's core claim completely wrong?\n4. SIMPLICITY CHALLENGE: Could a simpler system or explanation achieve the same result?\n5. THE COLLAPSE QUESTION: What single finding would make this entire framework wrong?\n\nBe precise. Do not hedge. The goal is to find the load-bearing weakness before L4 bakes it into the rewrite.`,
+
+  LC: (answer, la) => `AI ANSWER:\n${answer}\n\nADVERSARIAL FINDINGS:\n${la}\n\nYou are LC — Compression Integrity Layer. LLMs compress aggressively. Compression silently destroys distinctions. Your job is to find where compression happened and restore what was lost.\n\nHunt for:\n1. CONCEPT COLLAPSE: Where did multiple distinct concepts get merged into one term? Name both concepts separately.\n2. METAPHOR SUBSTITUTION: Where did a metaphor replace a mechanism? Name the mechanism that was hidden.\n3. ELEGANCE ERASURE: Where did clean phrasing delete important uncertainty or caveats?\n4. ABSTRACTION HIDING CAUSALITY: Where did a high-level term hide a specific causal claim that needs scrutiny?\n\nFor each instance found: name the compressed term, name what was lost, and state what the uncompressed version would say.\n\nIf no compression is detected, say so explicitly.`,
+
+  L1: (answer, p, w, lx, la, lc) => `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nReality Audit (LX):\n${lx}\n\nAdversarial Findings (LA):\n${la}\n\nCompression Audit (LC):\n${lc}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses informed by ALL upstream layers above:\nH1: [strongest improvement path — grounded in what LX and LA revealed]\nH2: [radical reframe — does the framing itself collapse under adversarial pressure?]\nH3: [failure mode — what compressed assumption or ungrounded claim will cause this to fail?]`,
   L2: (l1)           => `Hypotheses:\n${l1}\n\nYou are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`,
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
   L4: (answer, l3, w)=> `ORIGINAL ANSWER:\n${answer}\n\nREWRITE PLAN:\n${l3}\n\nWORLD FACTS:\n${w}\n\nYou are L4 — Finalization Engine. Execute the rewrite plan. Produce the final improved answer. Optimize for clarity, structure, and correctness. Output only the improved answer.`,
@@ -906,7 +918,10 @@ export default function App() {
 
       const p  = await runLayer("P",  LAYER_PROMPTS.P(inputText, l0), signal);              if (signal.aborted) return;
       const w  = await runLayer("W",  LAYER_PROMPTS.W(inputText, validatedCritiques), signal); if (signal.aborted) return;
-      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w), signal);           if (signal.aborted) return;
+      const lx = await runLayer("LX", LAYER_PROMPTS.LX(inputText, w), signal);              if (signal.aborted) return;
+      const la = await runLayer("LA", LAYER_PROMPTS.LA(inputText, lx), signal);             if (signal.aborted) return;
+      const lc = await runLayer("LC", LAYER_PROMPTS.LC(inputText, la), signal);             if (signal.aborted) return;
+      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lx, la, lc), signal); if (signal.aborted) return;
       const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
       const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 1200);    if (signal.aborted) return;
@@ -1027,7 +1042,7 @@ export default function App() {
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(22px,5vw,32px)", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, background: "linear-gradient(110deg,#ff6b35,#00d4ff,#10b981)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
                 4CBON
               </div>
-              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 11 LAYERS · L9</div>
+              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 14 LAYERS · L9</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "#10b981", fontWeight: 700 }}>unlimited runs</div>
@@ -1159,7 +1174,7 @@ export default function App() {
 
       <div style={{ borderTop: "1px solid #0f0f1e", padding: "16px 20px", textAlign: "center" }}>
         <div style={{ fontSize: 8, color: "#1a1a2e", letterSpacing: "0.2em" }}>
-          THINK → PARSE → GROUND → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION
+          THINK → PARSE → GROUND → ADJUDICATE → ATTACK → DECOMPRESS → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION
         </div>
       </div>
     </div>
