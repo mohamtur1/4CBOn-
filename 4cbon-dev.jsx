@@ -4,7 +4,7 @@ const RUNTIME_SPEC = `You are the 4CBON Runtime Engine — a layered cognitive e
 
 Your job is to process AI-generated answers through a deterministic multi-layer transformation pipeline. You execute one layer at a time. Each layer has a specific cognitive role. You never skip layers. You never merge layers.
 
-PIPELINE: L0 → P → W → LX → LA → LC → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8
+PIPELINE: L0 → P → W → LX → LA → LC → L1 → L2 → L3 → L4 → LR → L6 → L7 → L8 → L9 → L10
 
 YOUR IDENTITY:
 - You are not a chatbot. You are an execution engine.
@@ -28,6 +28,8 @@ LR — REGRET LAYER: Analyze improvement delta. What errors corrected? What hall
 L6 — TRACE MEMORY: Store the immutable execution log. Input → hypotheses → decisions → score trajectory.
 L7 — CURRICULUM GENERATOR: Extract lessons learned, failure patterns, reusable heuristics.
 L8 — IDENTITY MODEL: Summarize system behavior this run. Strengths, weaknesses, bias tendencies.
+L9 — SOCRATIC INTEGRITY ENGINE: Generate exactly 3 self-questions specific to this run. One observational, one reasoning, one alignment-level.
+L10 — SYNTHESIS/AUDIT LAYER: Read all prior layer outputs. Produce a final certification: (1) did the rewrite genuinely improve the answer or just rearrange it, (2) did any layer contradict another, (3) does the L4 output contain any remaining overclaims or hallucinations, (4) one-sentence verdict a human should read before acting on this output.
 
 Stay in your assigned layer. Output only what that layer produces. Be precise and concise.`;
 
@@ -46,6 +48,7 @@ const LAYERS = [
   { id: "L6", name: "Trace Memory",           color: "#f43f5e", emoji: "⟳" },
   { id: "L7", name: "Curriculum Generator",   color: "#c084fc", emoji: "◆" },
   { id: "L8", name: "Identity Model",         color: "#fbbf24", emoji: "⚙" },
+  { id: "L10", name: "Synthesis/Audit",        color: "#6ee7b7", emoji: "✦" },
 ];
 
 // ═══════════════════════════════════════════════════════════
@@ -196,6 +199,34 @@ const LAYER_PROMPTS = {
   L6: (s0, s1, gaps) => `Score trajectory: ${s0} → ${s1}\nGaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L6 — Trace Memory. Write the immutable execution log of this run.`,
   L7: (lr, l6)       => `Regret analysis:\n${lr}\n\nTrace:\n${l6}\n\nYou are L7 — Curriculum Generator. Extract: (1) 3 lessons learned, (2) key failure patterns, (3) 2 reusable heuristics, (4) 2 challenge questions.`,
   L8: (s0, s1, gaps) => `Run: score ${s0}→${s1}, gaps fixed: ${gaps.join(", ") || "none"}\n\nYou are L8 — Identity Model. Summarize: 1. Strengths, 2. Weaknesses, 3. Bias tendencies, 4. One new self-belief`,
+  L10: (l4, lr, l7, l8, l9qs, s0, s1) => `PIPELINE RUN SUMMARY:
+Score: ${s0} → ${s1}
+
+L4 FINAL REWRITE (first 600 chars):
+${l4.slice(0, 600)}
+
+LR REGRET ANALYSIS (first 400 chars):
+${lr.slice(0, 400)}
+
+L7 LESSONS (first 300 chars):
+${l7.slice(0, 300)}
+
+L8 SELF-BELIEF:
+${l8.slice(0, 200)}
+
+L9 UNRESOLVED QUESTIONS:
+${l9qs}
+
+You are L10 — Synthesis/Audit Layer. Produce a final certification of this pipeline run. Your output must address exactly four things:
+
+1. IMPROVEMENT VERDICT: Did the rewrite genuinely improve the answer (better reasoning, fewer errors, more accurate) or did it merely rearrange it (same claims, different structure)? Be specific about what changed.
+
+2. CONTRADICTION AUDIT: Did any layer contradict another? Check: does LR say the rewrite failed while L6 logged it complete? Does L8 identify a weakness that L4 ignored? Name any contradiction found or state NONE DETECTED.
+
+3. INTEGRITY CHECK: Does the L4 output contain any remaining overclaims, hallucinations, or compression failures that slipped through? Name them specifically or state NONE DETECTED.
+
+4. HUMAN VERDICT: One sentence a human should read before acting on this output. Start with either CERTIFIED, CERTIFIED WITH CAUTION, or REQUIRES REVIEW.`,
+
   L9: (l8, s0, s1, l4) => `You just completed a pipeline run. Score: ${s0}→${s1}.
 
 L8 self-belief from this run:
@@ -941,6 +972,13 @@ export default function App() {
       const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);              if (signal.aborted) return;
       const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
 
+      // L10 — Synthesis/Audit — final certification
+      const l9qs_preview = lastL9Questions && lastL9Questions.length > 0 
+        ? lastL9Questions.join("\n") 
+        : "No prior questions loaded";
+      await runLayer("L10", LAYER_PROMPTS.L10(l4, lr, l7, l8, l9qs_preview, s0, s1), signal);
+      if (signal.aborted) return;
+
       const newRunNumber = identity.totalRuns + 1;
       const runId = `run_${newRunNumber}_${Date.now()}`;
       setCurrentRunId(runId);
@@ -1042,7 +1080,7 @@ export default function App() {
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(22px,5vw,32px)", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, background: "linear-gradient(110deg,#ff6b35,#00d4ff,#10b981)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
                 4CBON
               </div>
-              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 14 LAYERS · L9</div>
+              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.28em", marginTop: 4 }}>RUNTIME MEGAPROMPT ENGINE · 16 LAYERS · L9 · L10</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "#10b981", fontWeight: 700 }}>unlimited runs</div>
@@ -1174,7 +1212,7 @@ export default function App() {
 
       <div style={{ borderTop: "1px solid #0f0f1e", padding: "16px 20px", textAlign: "center" }}>
         <div style={{ fontSize: 8, color: "#1a1a2e", letterSpacing: "0.2em" }}>
-          THINK → PARSE → GROUND → ADJUDICATE → ATTACK → DECOMPRESS → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION
+          THINK → PARSE → GROUND → ADJUDICATE → ATTACK → DECOMPRESS → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION → CERTIFY
         </div>
       </div>
     </div>
