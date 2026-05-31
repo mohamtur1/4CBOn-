@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+priorBeliefs.lengthimport { useState, useRef, useEffect } from "react";
 
 const RUNTIME_SPEC = `You are the 4CBON Runtime Engine — a layered cognitive execution system.
 
@@ -854,6 +854,7 @@ function FeedbackBox({ runId, originalAnswer, l4Output, onClose }) {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════
 export default function App() {
+  const [showLanding, setShowLanding]  = useState(true);
   const [answer, setAnswer]            = useState("");
   const [context, setContext]          = useState("");
   const [running, setRunning]          = useState(false);
@@ -1057,6 +1058,72 @@ export default function App() {
 
   const questionsRemaining = QUESTION_BANK.length - questionIndex;
   const hasOutput = Object.keys(layerOutputs).length > 0;
+
+  if (showLanding) return (
+    <div style={{ minHeight:"100vh", background:"#03030a", color:"#c0c0e0", fontFamily:"'JetBrains Mono','Courier New',monospace" }}>
+      <style>{`@keyframes scan{0%{top:0}100%{top:100vh}}`}</style>
+      <div style={{ position:"fixed", top:0, left:0, right:0, height:2, background:"linear-gradient(90deg,transparent,#ff6b35,#00d4ff,#10b981,transparent)", animation:"scan 8s linear infinite", zIndex:100 }} />
+      <nav style={{ position:"fixed", top:0, left:0, right:0, zIndex:50, padding:"16px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", background:"rgba(3,3,10,0.9)", borderBottom:"1px solid #0f0f1e" }}>
+        <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, fontWeight:900, background:"linear-gradient(110deg,#ff6b35,#00d4ff,#10b981)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>4CBON</div>
+        <div style={{ display:"flex", gap:16, alignItems:"center" }}>
+          <span style={{ fontSize:9, color:"#444466", letterSpacing:"0.15em" }}>16 LAYERS · SELF-IMPROVING</span>
+          <a href="https://4175358678144.gumroad.com/l/tbphpi" target="_blank" rel="noreferrer" style={{ fontSize:10, color:"#ff6b35", border:"1px solid #ff6b35", borderRadius:4, padding:"6px 14px", textDecoration:"none", letterSpacing:"0.15em" }}>UPGRADE →</a>
+        </div>
+      </nav>
+      <div style={{ maxWidth:720, margin:"0 auto", padding:"120px 24px 80px" }}>
+        <div style={{ fontSize:9, letterSpacing:"0.35em", color:"#ff6b35", textTransform:"uppercase", marginBottom:24 }}>Runtime Megaprompt Engine · 16 Layers · Self-Improving</div>
+        <div style={{ fontFamily:"'Playfair Display',serif", fontSize:"clamp(40px,8vw,80px)", fontWeight:900, lineHeight:1.0, marginBottom:32 }}>
+          <div style={{ color:"#c0c0e0" }}>AI gives you</div>
+          <div style={{ background:"linear-gradient(110deg,#ff6b35,#00d4ff)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>one shot.</div>
+          <div style={{ color:"#10b981" }}>4CBON loops.</div>
+        </div>
+        <p style={{ fontSize:14, color:"#444466", maxWidth:480, marginBottom:40, lineHeight:1.8 }}>
+          Every AI answer was generated once and shipped. No iteration. No self-critique.<br /><br />
+          <strong style={{ color:"#c0c0e0" }}>4CBON runs 16 cognitive layers</strong> until the answer is measurably better than what came in.
+        </p>
+        <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:12 }}>
+          <a href="https://4175358678144.gumroad.com/l/tbphpi" target="_blank" rel="noreferrer" style={{ background:"linear-gradient(135deg,#ff6b35,#00d4ff)", borderRadius:6, color:"#03030a", fontFamily:"monospace", fontWeight:900, fontSize:12, padding:"14px 28px", letterSpacing:"0.1em", textDecoration:"none", display:"inline-block" }}>★ UPGRADE TO PRO — $9/month</a>
+          <button onClick={() => setShowLanding(false)} style={{ background:"transparent", border:"1px solid #1a1a2e", borderRadius:6, color:"#444466", fontFamily:"monospace", fontSize:12, padding:"14px 28px", letterSpacing:"0.1em", cursor:"pointer" }}>Try free (3 runs/day) →</button>
+        </div>
+        <p style={{ fontSize:9, color:"#333355", letterSpacing:"0.1em", marginBottom:48 }}>API costs are real — Pro users keep the pipeline running for everyone.</p>
+        <div style={{ background:"#06060f", border:"1px solid #0f0f1e", borderRadius:8, padding:20, marginBottom:48 }}>
+          <div style={{ fontSize:9, color:"#444466", letterSpacing:"0.2em", marginBottom:12, display:"flex", justifyContent:"space-between" }}><span>LIVE PIPELINE · RUN #141</span><span style={{ color:"#10b981" }}>● ACTIVE</span></div>
+          <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:14 }}>
+            {["L0","P","W","LX","LA","LC","L1","L2","L3","L4","LR","L6","L7","L8","L9","L10"].map(l=>(<div key={l} style={{ fontSize:9, fontWeight:700, padding:"3px 7px", borderRadius:4, background:"rgba(16,185,129,0.15)", border:"1px solid #10b981", color:"#10b981" }}>✓ {l}</div>))}
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, paddingTop:14, borderTop:"1px solid #0f0f1e" }}>
+            <span style={{ fontFamily:"monospace", fontWeight:900, fontSize:28, color:"#f59e0b" }}>62</span>
+            <div style={{ flex:1, height:6, background:"#111", borderRadius:3 }}><div style={{ height:"100%", width:"62%", background:"#f59e0b", borderRadius:3 }} /></div>
+            <span style={{ color:"#10b981", fontSize:18 }}>→</span>
+            <div style={{ flex:1, height:6, background:"#111", borderRadius:3 }}><div style={{ height:"100%", width:"72%", background:"#10b981", borderRadius:3 }} /></div>
+            <span style={{ fontFamily:"monospace", fontWeight:900, fontSize:28, color:"#10b981" }}>72</span>
+            <span style={{ fontSize:9, color:"#10b981", fontWeight:700 }}>+10</span>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:48 }}>
+          <div style={{ background:"#06060f", border:"1px solid #0f0f1e", borderRadius:8, padding:"24px 20px" }}>
+            <div style={{ fontSize:9, color:"#444466", textTransform:"uppercase", letterSpacing:"0.2em", marginBottom:10 }}>Free</div>
+            <div style={{ fontFamily:"monospace", fontSize:40, fontWeight:900, color:"#c0c0e0", lineHeight:1, marginBottom:4 }}>$0</div>
+            <div style={{ fontSize:10, color:"#444466", marginBottom:16 }}>forever</div>
+            {["3 runs/day","16 layers","Score bar","Copy buttons","No credit card"].map(f=><div key={f} style={{ fontSize:11, color:"#444466", padding:"5px 0", borderBottom:"1px solid #0f0f1e" }}>· {f}</div>)}
+            <button onClick={() => setShowLanding(false)} style={{ display:"block", width:"100%", marginTop:20, padding:10, borderRadius:6, background:"transparent", border:"1px solid #1a1a2e", color:"#444466", fontFamily:"monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.1em" }}>Try free (limited) →</button>
+          </div>
+          <div style={{ background:"rgba(255,107,53,0.04)", border:"1px solid #ff6b35", borderRadius:8, padding:"24px 20px", position:"relative" }}>
+            <div style={{ position:"absolute", top:-1, right:16, background:"#ff6b35", color:"#03030a", fontSize:8, fontWeight:700, padding:"4px 10px", borderRadius:"0 0 4px 4px" }}>MOST POPULAR</div>
+            <div style={{ fontSize:9, color:"#444466", textTransform:"uppercase", letterSpacing:"0.2em", marginBottom:10 }}>Pro</div>
+            <div style={{ fontFamily:"monospace", fontSize:40, fontWeight:900, color:"#c0c0e0", lineHeight:1, marginBottom:4 }}>$9</div>
+            <div style={{ fontSize:10, color:"#444466", marginBottom:16 }}>per month</div>
+            {["Unlimited runs","Supabase memory","AI feedback generator","Credibility parser","L9 + L10"].map(f=><div key={f} style={{ fontSize:11, color:"#c0c0e0", padding:"5px 0", borderBottom:"1px solid #1a1a2e" }}>· {f}</div>)}
+            <a href="https://4175358678144.gumroad.com/l/tbphpi" target="_blank" rel="noreferrer" style={{ display:"block", width:"100%", marginTop:20, padding:10, borderRadius:6, background:"linear-gradient(135deg,#ff6b35,#00d4ff)", color:"#03030a", fontFamily:"monospace", fontSize:11, letterSpacing:"0.1em", textAlign:"center", textDecoration:"none" }}>UPGRADE TO PRO →</a>
+          </div>
+        </div>
+        <div style={{ textAlign:"center", paddingBottom:60 }}>
+          <button onClick={() => setShowLanding(false)} style={{ background:"linear-gradient(135deg,#ff6b35,#00d4ff)", border:"none", borderRadius:6, color:"#03030a", fontFamily:"monospace", fontWeight:900, fontSize:12, padding:"14px 32px", letterSpacing:"0.1em", cursor:"pointer" }}>▶ RUN THE PIPELINE FREE</button>
+          <div style={{ fontSize:8, color:"#1a1a2e", letterSpacing:"0.15em", marginTop:24 }}>THINK → PARSE → GROUND → ADJUDICATE → ATTACK → DECOMPRESS → HYPOTHESIZE → EVALUATE → PLAN → REWRITE → REFLECT → REMEMBER → LEARN → EVOLVE → QUESTION → CERTIFY</div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div style={{ minHeight: "100vh", background: "#03030a", color: "#c0c0e0", fontFamily: "'JetBrains Mono', 'Courier New', monospace" }}>
