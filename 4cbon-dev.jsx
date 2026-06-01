@@ -954,7 +954,8 @@ export default function App() {
       const la = await runLayer("LA", LAYER_PROMPTS.LA(inputText, lx), signal);             if (signal.aborted) return;
       const lc = await runLayer("LC", LAYER_PROMPTS.LC(inputText, la), signal);             if (signal.aborted) return;
       const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lx, la, lc), signal); if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0), signal);                    if (signal.aborted) return;
+      if (l2.includes("HALT — INPUT NEAR-OPTIMAL")) { setScoreAfter(s0); setError("HALT — Input is near-optimal. Rewriting would degrade quality."); setRunning(false); return; }
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
       const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 1200);    if (signal.aborted) return;
 
