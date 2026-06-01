@@ -192,7 +192,7 @@ const LAYER_PROMPTS = {
   LC: (answer, la) => `AI ANSWER:\n${answer}\n\nADVERSARIAL FINDINGS:\n${la}\n\nYou are LC — Compression Integrity Layer. LLMs compress aggressively. Compression silently destroys distinctions. Your job is to find where compression happened and restore what was lost.\n\nHunt for:\n1. CONCEPT COLLAPSE: Where did multiple distinct concepts get merged into one term? Name both concepts separately.\n2. METAPHOR SUBSTITUTION: Where did a metaphor replace a mechanism? Name the mechanism that was hidden.\n3. ELEGANCE ERASURE: Where did clean phrasing delete important uncertainty or caveats?\n4. ABSTRACTION HIDING CAUSALITY: Where did a high-level term hide a specific causal claim that needs scrutiny?\n\nFor each instance found: name the compressed term, name what was lost, and state what the uncompressed version would say.\n\nIf no compression is detected, say so explicitly.`,
 
   L1: (answer, p, w, lx, la, lc) => `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nReality Audit (LX):\n${lx}\n\nAdversarial Findings (LA):\n${la}\n\nCompression Audit (LC):\n${lc}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses informed by ALL upstream layers above:\nH1: [strongest improvement path — grounded in what LX and LA revealed]\nH2: [radical reframe — does the framing itself collapse under adversarial pressure?]\nH3: [failure mode — what compressed assumption or ungrounded claim will cause this to fail?]`,
-  L2: (l1, s0)       => `Hypotheses:\n${l1}\n\nInput score: ${s0}/100\n\nYou are L2 — Evaluation Layer. IMPORTANT: If the input scored above 60 and all hypotheses would produce marginal or negative improvement, output exactly: HALT — INPUT NEAR-OPTIMAL and nothing else. Otherwise score each hypothesis 1-10, pick the best path, explain your reasoning in 3 sentences.`,
+  L2: (l1)           => `Hypotheses:\n${l1}\n\nYou are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`,
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
   L4: (answer, l3, w)=> `ORIGINAL ANSWER:\n${answer}\n\nREWRITE PLAN:\n${l3}\n\nWORLD FACTS:\n${w}\n\nYou are L4 — Finalization Engine. Execute the rewrite plan. Produce the final improved answer. Optimize for clarity, structure, and correctness. Output only the improved answer.`,
   LR: (answer, l4, s0, s1) => `BEFORE (score ${s0}/100):\n${answer}\n\nAFTER (score ${s1}/100):\n${l4}\n\nYou are LR — Regret Layer. Analyze: (1) errors corrected, (2) hallucinations removed, (3) structural improvements, (4) what still needs work.`,
@@ -876,6 +876,9 @@ export default function App() {
   const [lastL4Output, setLastL4Output]   = useState("");
   const [lastAnswer, setLastAnswer]       = useState("");
   const [copyAllDone, setCopyAllDone]     = useState(false);
+  const [batchRunning, setBatchRunning]   = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, status: "" });
+  const batchAbort = useRef(false);
   const abortCtrl = useRef(null);
   const bottom = useRef(null);
 
@@ -954,10 +957,9 @@ export default function App() {
       const la = await runLayer("LA", LAYER_PROMPTS.LA(inputText, lx), signal);             if (signal.aborted) return;
       const lc = await runLayer("LC", LAYER_PROMPTS.LC(inputText, la), signal);             if (signal.aborted) return;
       const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lx, la, lc), signal); if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0), signal);                    if (signal.aborted) return;
-      if (l2.includes("HALT — INPUT NEAR-OPTIMAL")) { setScoreAfter(s0); setError("HALT — Input is near-optimal. Rewriting would degrade quality."); setRunning(false); return; }
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
-      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 1600);    if (signal.aborted) return;
+      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 1200);    if (signal.aborted) return;
 
       // Store L4 output for AI feedback generator
       setLastL4Output(l4);
@@ -971,7 +973,7 @@ export default function App() {
 
       const lr = await runLayer("LR", LAYER_PROMPTS.LR(inputText, l4, s0, s1), signal);     if (signal.aborted) return;
       const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
-      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1600);              if (signal.aborted) return;
+      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);              if (signal.aborted) return;
       const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
 
       // L10 — Synthesis/Audit — final certification
@@ -1028,6 +1030,95 @@ export default function App() {
     if (!answer.trim() || running) return;
     abortCtrl.current = new AbortController();
     await executePipeline(answer, abortCtrl.current.signal);
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // AUTONOMOUS BATCH RUN — runs all remaining questions, self-reviews
+  // ═══════════════════════════════════════════════════════════
+  const runAllQuestions = async () => {
+    if (batchRunning || running) return;
+    batchAbort.current = false;
+    setBatchRunning(true);
+
+    const startIdx = getQuestionIndex();
+    const remaining = QUESTION_BANK.length - startIdx;
+    if (remaining <= 0) {
+      setBatchRunning(false);
+      return;
+    }
+
+    setBatchProgress({ current: 0, total: remaining, status: "Starting autonomous run..." });
+
+    for (let i = startIdx; i < QUESTION_BANK.length; i++) {
+      if (batchAbort.current) break;
+
+      const question = QUESTION_BANK[i];
+      const runNumber = i + 1;
+      const newIdx = i + 1;
+      setQuestionIndex(newIdx);
+      setQuestionIndex(newIdx);
+      try { localStorage.setItem("4cbon_qidx", String(newIdx)); } catch {}
+
+      setBatchProgress({
+        current: i - startIdx + 1,
+        total: remaining,
+        status: `Q${runNumber}/100 — running pipeline...`
+      });
+
+      setAnswer(question);
+
+      // Run the pipeline
+      abortCtrl.current = new AbortController();
+      await executePipeline(question, abortCtrl.current.signal);
+
+      if (batchAbort.current) break;
+
+      // Auto-generate and submit AI feedback
+      setBatchProgress({
+        current: i - startIdx + 1,
+        total: remaining,
+        status: `Q${runNumber}/100 — generating self-review...`
+      });
+
+      // Wait briefly for state to settle
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Auto-submit feedback using AI generator
+      const l4 = layerOutputs["L4"] || "";
+      const originalAns = question;
+      if (l4) {
+        const feedback = await generateAIFeedback(originalAns, l4);
+        if (feedback && feedback.evidence && feedback.confidence >= 2) {
+          const runId = `batch_run_${runNumber}_${Date.now()}`;
+          await saveFeedbackToSupabase(
+            feedback.evidence,
+            feedback.confidence,
+            feedback.critique_type,
+            feedback.suggested_correction,
+            runId
+          );
+        }
+      }
+
+      setBatchProgress({
+        current: i - startIdx + 1,
+        total: remaining,
+        status: `Q${runNumber}/100 — complete. Next in 2s...`
+      });
+
+      // Brief pause between runs
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    setBatchRunning(false);
+    setBatchProgress({ current: remaining, total: remaining, status: "✓ All questions complete." });
+  };
+
+  const stopBatch = () => {
+    batchAbort.current = true;
+    abortCtrl.current?.abort();
+    setBatchRunning(false);
+    setBatchProgress(prev => ({ ...prev, status: "Stopped by user." }));
   };
 
   const runNextQuestion = async () => {
@@ -1220,6 +1311,12 @@ export default function App() {
             {questionIndex >= QUESTION_BANK.length ? "✓ ALL DONE" : `⟫ Q${questionIndex + 1} AUTO`}
           </button>
 
+          <button onClick={batchRunning ? stopBatch : runAllQuestions}
+            disabled={running || questionIndex >= QUESTION_BANK.length}
+            style={{ flex: 2, background: batchRunning ? "#0a0a14" : running || questionIndex >= QUESTION_BANK.length ? "#0a0a14" : "linear-gradient(135deg,#10b981,#7c3aed)", border: `1px solid ${batchRunning ? "#ef444433" : running || questionIndex >= QUESTION_BANK.length ? "#1a1a2e" : "#10b98144"}`, borderRadius: 6, color: batchRunning ? "#ef4444" : running || questionIndex >= QUESTION_BANK.length ? "#333" : "#030308", fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, fontSize: 11, padding: "12px 8px", letterSpacing: "0.08em", minWidth: 0 }}>
+            {batchRunning ? "■ STOP BATCH" : questionIndex >= QUESTION_BANK.length ? "✓ ALL DONE" : "⟫⟫ RUN ALL"}
+          </button>
+
           {running && (
             <button onClick={stop} style={{ background: "transparent", border: "1px solid #ef444433", borderRadius: 6, color: "#ef4444", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, padding: "12px 10px" }}>✕</button>
           )}
@@ -1232,6 +1329,29 @@ export default function App() {
             </>
           )}
         </div>
+        )}
+
+        {/* BATCH PROGRESS */}
+        {(batchRunning || batchProgress.total > 0) && (
+          <div style={{ margin: "12px 0", padding: "14px 16px", background: "#06060f", border: `1px solid ${batchRunning ? "#10b981" : "#1a1a2e"}`, borderLeft: `3px solid ${batchRunning ? "#10b981" : "#333"}`, borderRadius: 8 }}>
+            <div style={{ fontSize: 9, color: "#10b981", letterSpacing: "0.2em", marginBottom: 8 }}>
+              AUTONOMOUS BATCH RUN {batchRunning ? "— ACTIVE" : "— COMPLETE"}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <div style={{ flex: 1, height: 4, background: "#111", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${batchProgress.total > 0 ? (batchProgress.current / batchProgress.total) * 100 : 0}%`, background: "#10b981", borderRadius: 2, transition: "width 0.5s ease" }} />
+              </div>
+              <span style={{ fontSize: 10, color: "#10b981", fontFamily: "monospace", minWidth: 60 }}>
+                {batchProgress.current}/{batchProgress.total}
+              </span>
+            </div>
+            <div style={{ fontSize: 10, color: "#444466", fontFamily: "monospace" }}>{batchProgress.status}</div>
+            {batchRunning && (
+              <div style={{ fontSize: 9, color: "#333355", marginTop: 6, fontFamily: "monospace" }}>
+                You can minimize this tab. The pipeline runs autonomously.
+              </div>
+            )}
+          </div>
         )}
 
         {error && (
