@@ -965,12 +965,14 @@ export default function App() {
       const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
       const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2500);    if (signal.aborted) return;
+const l4Failed = !l4 || l4.trim().length < 100 || l4.includes("EXECUTION_ABORTED");
 
-      // L4 HALT CASCADE — stop pipeline if L4 failed or truncated
-      const l4Failed = !l4 || l4.trim().length < 100 ||
-        l4.includes("cannot finalize") ||
-        l4.includes("EXECUTION_ABORTED") ||
-        l4.includes("incomplete plan");
+if (l4Failed) {
+  setScoreAfter(s0);
+  setError("L4 HALT — Execution failed. Pipeline stopped. Downstream layers will not run on a failed execution.");
+  setRunning(false);
+  return;
+      }
 
       if (l4Failed) {
         setScoreAfter(s0);
