@@ -956,11 +956,29 @@ export default function App() {
       const lx = await runLayer("LX", LAYER_PROMPTS.LX(inputText, w), signal);              if (signal.aborted) return;
       const la = await runLayer("LA", LAYER_PROMPTS.LA(inputText, lx), signal);             if (signal.aborted) return;
       const lc = await runLayer("LC", LAYER_PROMPTS.LC(inputText, la), signal);             if (signal.aborted) return;
-      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lx, la, lc), signal); if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0), signal);
-if (l2.includes("HALT — INPUT NEAR-OPTIMAL")) { setScoreAfter(s0); setError("HALT — Input is near-optimal. Rewriting would degrade quality."); setRunning(false); return; } 
+      // ARTIFACT DISTILLATION — compress LX, LA, LC into execution packets for L1
+      const lxSummary = lx.slice(0, 600);
+      const laSummary = la.slice(0, 600);
+      const lcSummary = lc.slice(0, 600);
+
+      const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lxSummary, laSummary, lcSummary), signal); if (signal.aborted) return;
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
       const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2500);    if (signal.aborted) return;
+
+      // L4 HALT CASCADE — stop pipeline if L4 failed or truncated
+      const l4Failed = !l4 || l4.trim().length < 100 ||
+        l4.includes("cannot finalize") ||
+        l4.includes("EXECUTION_ABORTED") ||
+        l4.toLowerCase().includes("truncated") ||
+        l4.includes("incomplete plan");
+
+      if (l4Failed) {
+        setScoreAfter(s0);
+        setError("L4 HALT — Execution failed. Pipeline stopped. Downstream layers will not run on a failed execution.");
+        setRunning(false);
+        return;
+      }
 
       // Store L4 output for AI feedback generator
       setLastL4Output(l4);
@@ -974,7 +992,7 @@ if (l2.includes("HALT — INPUT NEAR-OPTIMAL")) { setScoreAfter(s0); setError("H
 
       const lr = await runLayer("LR", LAYER_PROMPTS.LR(inputText, l4, s0, s1), signal);     if (signal.aborted) return;
       const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
-      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 2500);              if (signal.aborted) return;
+      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 1200);              if (signal.aborted) return;
       const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
 
       // L10 — Synthesis/Audit — final certification
