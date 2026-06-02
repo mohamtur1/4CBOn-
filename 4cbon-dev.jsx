@@ -970,7 +970,6 @@ export default function App() {
       const l4Failed = !l4 || l4.trim().length < 100 ||
         l4.includes("cannot finalize") ||
         l4.includes("EXECUTION_ABORTED") ||
-        l4.toLowerCase().includes("truncated") ||
         l4.includes("incomplete plan");
 
       if (l4Failed) {
