@@ -960,7 +960,7 @@ export default function App() {
       const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0), signal);
 if (l2.includes("HALT — INPUT NEAR-OPTIMAL")) { setScoreAfter(s0); setError("HALT — Input is near-optimal. Rewriting would degrade quality."); setRunning(false); return; } 
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
-      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2000);    if (signal.aborted) return;
+      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2500);    if (signal.aborted) return;
 
       // Store L4 output for AI feedback generator
       setLastL4Output(l4);
@@ -974,7 +974,7 @@ if (l2.includes("HALT — INPUT NEAR-OPTIMAL")) { setScoreAfter(s0); setError("H
 
       const lr = await runLayer("LR", LAYER_PROMPTS.LR(inputText, l4, s0, s1), signal);     if (signal.aborted) return;
       const l6 = await runLayer("L6", LAYER_PROMPTS.L6(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
-      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 2000);              if (signal.aborted) return;
+      const l7 = await runLayer("L7", LAYER_PROMPTS.L7(lr, l6), signal, 2500);              if (signal.aborted) return;
       const l8 = await runLayer("L8", LAYER_PROMPTS.L8(s0, s1, gapsFixed), signal);         if (signal.aborted) return;
 
       // L10 — Synthesis/Audit — final certification
