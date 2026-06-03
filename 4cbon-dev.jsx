@@ -964,16 +964,10 @@ export default function App() {
       const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lxSummary, laSummary, lcSummary), signal); if (signal.aborted) return;
       const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1), signal);                        if (signal.aborted) return;
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
-      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2500);    if (signal.aborted) return;
-const l4Failed = !l4 || l4.trim().length < 100 || l4.includes("EXECUTION_ABORTED");
+      const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2500);
+      if (signal.aborted) return;
 
-if (l4Failed) {
-  setScoreAfter(s0);
-  setError("L4 HALT — Execution failed. Pipeline stopped. Downstream layers will not run on a failed execution.");
-  setRunning(false);
-  return;
-      }
-
+      const l4Failed = !l4 || l4.trim().length < 500 || l4.includes("EXECUTION_ABORTED");
       if (l4Failed) {
         setScoreAfter(s0);
         setError("L4 HALT — Execution failed. Pipeline stopped. Downstream layers will not run on a failed execution.");
@@ -983,6 +977,8 @@ if (l4Failed) {
 
       // Store L4 output for AI feedback generator
       setLastL4Output(l4);
+
+      setScoring(true);
 
       setScoring(true);
       const s1 = await scoreWithClaude(l4, s0);
