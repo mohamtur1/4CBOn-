@@ -42,6 +42,7 @@ const LAYERS = [
   { id: "LC", name: "Compression Integrity",    color: "#0ea5e9", emoji: "⊘" },
   { id: "L1", name: "Hypothesis Engine",        color: "#38bdf8", emoji: "◈" },
   { id: "L2", name: "Evaluation Layer",       color: "#f59e0b", emoji: "◉" },
+  { id: "LP", name: "Policy Translation",        color: "#8b5cf6", emoji: "⊛" },
   { id: "L3", name: "Rewrite Planner",        color: "#7c3aed", emoji: "◐" },
   { id: "L4", name: "Finalization Engine",    color: "#10b981", emoji: "★", final: true },
   { id: "LR", name: "Regret Layer",           color: "#ef4444", emoji: "◑" },
@@ -183,7 +184,7 @@ const LAYER_PROMPTS = {
     const critiqueContext = validatedCritiques && validatedCritiques.length > 0
       ? `\n\nVALIDATED EXTERNAL CRITIQUES (human-submitted, confidence ≥3, Factual type — treat as HIGH certainty grounded facts when they contradict claims in the answer):\n${validatedCritiques.map(c => `· ${c.evidence}${c.suggested_correction ? ` → Correction: ${c.suggested_correction}` : ""}`).join("\n")}\n`
       : "";
-    return `AI ANSWER:\n${answer}${critiqueContext}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable. If validated external critiques are present above, treat them as HIGH certainty grounded facts when they contradict claims in the answer.`;
+    return `AI ANSWER:\n${answer}${critiqueContext}\n\nYou are W — World Model Layer. Extract the factual claims in this answer. For each claim, label certainty: HIGH / MEDIUM / UNKNOWN. Flag anything that may be outdated or unverifiable. If validated external critiques are present above, treat them as HIGH certainty grounded facts when they contradict claims in the answer. For claims labeled UNKNOWN, note what external source type would verify or falsify them (e.g. peer-reviewed study, official statistic, primary source document).`;
   },
   LX: (answer, w) => `AI ANSWER:\n${answer}\n\nW WORLD MODEL:\n${w}\n\nYou are LX — Reality Adjudication Layer. For every claim labeled MEDIUM or UNKNOWN by the World Model Layer, apply three tests:\n1. PREDICTION TEST: What testable prediction does this claim make?\n2. ADVERSARY TEST: What would the strongest critic say against this claim?\n3. VERIFICATION TEST: What external artifact, data, or observation would confirm or refute it?\n\nLabel each claim:\n- FALSIFIABLE: passes at least one test\n- UNFALSIFIABLE: fails all three tests — claim is ungrounded\n- TESTABLE-IN-PRINCIPLE: no current test exists but one could be designed\n\nOutput a structured audit. Be specific. Do not pass ungrounded claims forward unchallenged.`,
 
@@ -199,6 +200,8 @@ const LAYER_PROMPTS = {
     }
     return base + `You are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`;
   },
+  LP: (answer, l2) => `ORIGINAL ANSWER (first 400 chars):\n${answer.slice(0,400)}\n\nL2 SELECTED HYPOTHESIS:\n${l2}\n\nYou are LP — Policy Translation Layer. Your ONLY job is a structural coherence check.\n\nCheck: Does the selected hypothesis INVERT or CONTRADICT the original answer's foundational claim?\n\nIf YES — output exactly: INVERSION_DETECTED — [one sentence explaining what was inverted]\nIf NO — output exactly: COHERENT — proceed to L3\n\nDo not rewrite. Do not improve. Only check structural coherence.`,
+
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
   L4: (answer, l3, w)=> `ORIGINAL ANSWER:\n${answer}\n\nREWRITE PLAN:\n${l3}\n\nWORLD FACTS:\n${w}\n\nYou are L4 — Finalization Engine. Execute the rewrite plan. Produce the final improved answer. Optimize for clarity, structure, and correctness. Output only the improved answer.`,
   LR: (answer, l4, s0, s1) => `BEFORE (score ${s0}/100):\n${answer}\n\nAFTER (score ${s1}/100):\n${l4}\n\nYou are LR — Regret Layer. Analyze: (1) errors corrected, (2) hallucinations removed, (3) structural improvements, (4) what still needs work.`,
@@ -974,6 +977,17 @@ export default function App() {
       const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0, operatingMode), signal);
       if (signal.aborted) return;
       if (l2.includes("NO_REWRITE")) { setScoreAfter(s0); setError("HIGH QUALITY MODE: No improvement found. Original answer is stronger than any available rewrite. Your input is excellent."); setRunning(false); return; }
+
+      // LP — Policy Translation Layer: structural coherence gate
+      const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal);
+      if (signal.aborted) return;
+      if (lp.includes("INVERSION_DETECTED")) {
+        setScoreAfter(s0);
+        setError("LP HALT — " + lp.replace("INVERSION_DETECTED — ", "") + " Pipeline stopped to prevent structural inversion.");
+        setRunning(false);
+        return;
+      }
+
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
       const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2500);
       if (signal.aborted) return;
@@ -1013,7 +1027,17 @@ export default function App() {
       setCurrentRunId(runId);
 
       // Save belief to Supabase
-      const beliefToSave = `Run #${newRunNumber} (${s0}→${s1}): ${l8.slice(0, 200)}`;
+      const beliefToSave = JSON.stringify({
+        run: newRunNumber,
+        score_before: s0,
+        score_after: s1,
+        delta: s1 - s0,
+        scope: operatingMode === "HIGH_QUALITY" ? "high_quality_input" : "standard_input",
+        belief: l8.slice(0, 200),
+        gaps_fixed: gapsFixed,
+        timestamp: new Date().toISOString(),
+        status: "unverified"
+      });
       await saveBeliefToSupabase(beliefToSave, s0, s1, newRunNumber);
 
       // Mark validated critiques as injected
