@@ -192,7 +192,13 @@ const LAYER_PROMPTS = {
   LC: (answer, la) => `AI ANSWER:\n${answer}\n\nADVERSARIAL FINDINGS:\n${la}\n\nYou are LC — Compression Integrity Layer. LLMs compress aggressively. Compression silently destroys distinctions. Your job is to find where compression happened and restore what was lost.\n\nHunt for:\n1. CONCEPT COLLAPSE: Where did multiple distinct concepts get merged into one term? Name both concepts separately.\n2. METAPHOR SUBSTITUTION: Where did a metaphor replace a mechanism? Name the mechanism that was hidden.\n3. ELEGANCE ERASURE: Where did clean phrasing delete important uncertainty or caveats?\n4. ABSTRACTION HIDING CAUSALITY: Where did a high-level term hide a specific causal claim that needs scrutiny?\n\nFor each instance found: name the compressed term, name what was lost, and state what the uncompressed version would say.\n\nIf no compression is detected, say so explicitly.`,
 
   L1: (answer, p, w, lx, la, lc) => `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nReality Audit (LX):\n${lx}\n\nAdversarial Findings (LA):\n${la}\n\nCompression Audit (LC):\n${lc}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses informed by ALL upstream layers above:\nH1: [strongest improvement path — grounded in what LX and LA revealed]\nH2: [radical reframe — does the framing itself collapse under adversarial pressure?]\nH3: [failure mode — what compressed assumption or ungrounded claim will cause this to fail?]`,
-  L2: (l1)           => `Hypotheses:\n${l1}\n\nYou are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`,
+  L2: (l1, s0, mode) => {
+    const base = `Hypotheses:\n${l1}\n\nInput score: ${s0}/100\n\n`;
+    if (mode === "HIGH_QUALITY") {
+      return base + `You are L2 — Evaluation Layer in HIGH QUALITY SCRUTINY MODE. This input already scores ${s0}/100. Do NOT fix obvious problems. Score each hypothesis only if it: (1) surfaces a hidden assumption, (2) identifies a failure case, (3) exposes a term doing too much epistemic work, or (4) adds genuine precision. If no hypothesis clears this bar, output exactly: NO_REWRITE and nothing else. Otherwise pick the best hypothesis, explain why in 2 sentences.`;
+    }
+    return base + `You are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`;
+  },
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
   L4: (answer, l3, w)=> `ORIGINAL ANSWER:\n${answer}\n\nREWRITE PLAN:\n${l3}\n\nWORLD FACTS:\n${w}\n\nYou are L4 — Finalization Engine. Execute the rewrite plan. Produce the final improved answer. Optimize for clarity, structure, and correctness. Output only the improved answer.`,
   LR: (answer, l4, s0, s1) => `BEFORE (score ${s0}/100):\n${answer}\n\nAFTER (score ${s1}/100):\n${l4}\n\nYou are LR — Regret Layer. Analyze: (1) errors corrected, (2) hallucinations removed, (3) structural improvements, (4) what still needs work.`,
@@ -947,14 +953,9 @@ export default function App() {
 
       const s0 = await scoreWithClaude(inputText);
       setScoreBefore(s0);
-      // Hard score-based halt — enforced in code, not prompt
-      if (s0 >= 85) {
-        setScoreAfter(s0);
-        setError("HALT — Input scored " + s0 + "/100. Near-optimal. Pipeline stopped to preserve quality.");
-        setRunning(false);
-        return;
-      }
-      
+
+      // Determine operating mode based on input quality
+      const operatingMode = s0 >= 68 ? "HIGH_QUALITY" : "STANDARD";
 
       const l0 = await runLayer("L0", LAYER_PROMPTS.L0(inputText, context, priorBeliefs, priorQuestions), signal);
       if (signal.aborted) return;
@@ -970,9 +971,9 @@ export default function App() {
       const lcSummary = lc.slice(0, 600);
 
       const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lxSummary, laSummary, lcSummary), signal); if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0), signal);
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0, operatingMode), signal);
       if (signal.aborted) return;
-      if (l2.includes("HALT — INPUT NEAR-OPTIMAL")) { setScoreAfter(s0); setError("HALT — Input is near-optimal. Rewriting would degrade quality."); setRunning(false); return; }
+      if (l2.includes("NO_REWRITE")) { setScoreAfter(s0); setError("HIGH QUALITY MODE: No improvement found. Original answer is stronger than any available rewrite. Your input is excellent."); setRunning(false); return; }
       const l3 = await runLayer("L3", LAYER_PROMPTS.L3(inputText, l2, w), signal);          if (signal.aborted) return;
       const l4 = await runLayer("L4", LAYER_PROMPTS.L4(inputText, l3, w), signal, 2500);
       if (signal.aborted) return;
