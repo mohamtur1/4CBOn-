@@ -948,7 +948,7 @@ export default function App() {
       const s0 = await scoreWithClaude(inputText);
       setScoreBefore(s0);
       // Hard score-based halt — enforced in code, not prompt
-      if (s0 >= 68) {
+      if (s0 >= 85) {
         setScoreAfter(s0);
         setError("HALT — Input scored " + s0 + "/100. Near-optimal. Pipeline stopped to preserve quality.");
         setRunning(false);
