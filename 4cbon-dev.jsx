@@ -980,7 +980,7 @@ export default function App() {
 
       // GUARD — if L2 itself is truncated OR refusing/erroring, don't ask LP to judge broken input
       const l2LooksTruncated = !l2 || l2.trim().length < 50 || /[a-zA-Z]—$|[a-zA-Z]:$|[a-zA-Z],$/.test(l2.trim().slice(-3));
-      const l2Refusing = /\bcannot\b|\bmalformed\b|\bblocked\b|\bhalt\b|\bI am receiving\b|\brefus/i.test(l2.slice(0, 300));
+      const l2Refusing = /I cannot evaluate|I am receiving an incomplete|the input is malformed|execution status:\s*blocked|cannot proceed without|awaiting (complete|valid) input/i.test(l2.slice(0, 400));
       const l2Broken = l2LooksTruncated || l2Refusing;
       if (l2Broken) {
         setScoreAfter(s0);
