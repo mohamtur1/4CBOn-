@@ -978,8 +978,17 @@ export default function App() {
       if (signal.aborted) return;
       if (l2.includes("NO_REWRITE")) { setScoreAfter(s0); setError("HIGH QUALITY MODE: No improvement found. Original answer is stronger than any available rewrite. Your input is excellent."); setRunning(false); return; }
 
+      // GUARD — if L2 itself is truncated, don't ask LP to judge broken input
+      const l2Truncated = !l2 || l2.trim().length < 50 || /[a-zA-Z]—$|[a-zA-Z]:$|[a-zA-Z],$/.test(l2.trim().slice(-3));
+      if (l2Truncated) {
+        setScoreAfter(s0);
+        setError("UPSTREAM HALT — L2 output appears truncated or incomplete. Pipeline stopped before policy check to avoid evaluating broken input.");
+        setRunning(false);
+        return;
+      }
+
       // LP — Policy Translation Layer: structural coherence gate
-      const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal, 60);
+      const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal, 100);
       if (signal.aborted) return;
       if (lp.includes("INVERSION_DETECTED")) {
         setScoreAfter(s0);
