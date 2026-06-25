@@ -200,7 +200,7 @@ const LAYER_PROMPTS = {
     }
     return base + `You are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`;
   },
-  LP: (answer, l2) => `ORIGINAL ANSWER (first 400 chars):\n${answer.slice(0,400)}\n\nL2 SELECTED HYPOTHESIS:\n${l2}\n\nYou are LP — Policy Translation Layer. Your ONLY job is a structural coherence check.\n\nCheck: Does the selected hypothesis INVERT or CONTRADICT the original answer's foundational claim?\n\nIf YES — output exactly: INVERSION_DETECTED — [one sentence explaining what was inverted]\nIf NO — output exactly: COHERENT — proceed to L3\n\nDo not rewrite. Do not improve. Only check structural coherence.`,
+  LP: (answer, l2) => `ORIGINAL ANSWER (first 400 chars):\n${answer.slice(0,400)}\n\nL2 SELECTED HYPOTHESIS:\n${l2}\n\nYou are a BINARY GATE. You are not a planner, evaluator, or policy writer. You output ONE line and stop.\n\nQuestion: Does the L2 hypothesis INVERT, REVERSE, or CONTRADICT the original answer's foundational claim — turning a "must/always/never" into its opposite, or reversing what was being asserted?\n\nYou MUST respond with exactly one of these two lines, nothing else, no headers, no markdown, no explanation beyond what fits on that line:\n\nCOHERENT\nINVERSION_DETECTED — [max 15 words on what was inverted]\n\nFORBIDDEN: policy directives, decision matrices, scope analysis, rewrite plans, multiple paragraphs, headers, bullet points. If you write more than 15 words after COHERENT or INVERSION_DETECTED, you have failed this task.\n\nExample of correct output: INVERSION_DETECTED — original says system always halts, hypothesis says system should never halt\n\nExample of correct output: COHERENT`,
 
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
   L4: (answer, l3, w)=> `ORIGINAL ANSWER:\n${answer}\n\nREWRITE PLAN:\n${l3}\n\nWORLD FACTS:\n${w}\n\nYou are L4 — Finalization Engine. Execute the rewrite plan. Produce the final improved answer. Optimize for clarity, structure, and correctness. Output only the improved answer.`,
@@ -979,7 +979,7 @@ export default function App() {
       if (l2.includes("NO_REWRITE")) { setScoreAfter(s0); setError("HIGH QUALITY MODE: No improvement found. Original answer is stronger than any available rewrite. Your input is excellent."); setRunning(false); return; }
 
       // LP — Policy Translation Layer: structural coherence gate
-      const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal);
+      const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal, 60);
       if (signal.aborted) return;
       if (lp.includes("INVERSION_DETECTED")) {
         setScoreAfter(s0);
