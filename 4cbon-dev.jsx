@@ -200,7 +200,7 @@ const LAYER_PROMPTS = {
     }
     return base + `You are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`;
   },
-  LP: (answer, l2) => `ORIGINAL ANSWER (first 400 chars):\n${answer.slice(0,400)}\n\nL2 SELECTED HYPOTHESIS:\n${l2}\n\nYou are a BINARY GATE. You are not a planner, evaluator, or policy writer. You output ONE line and stop.\n\nQuestion: Does the L2 hypothesis INVERT, REVERSE, or CONTRADICT the original answer's foundational claim — turning a "must/always/never" into its opposite, or reversing what was being asserted?\n\nYou MUST respond with exactly one of these two lines, nothing else, no headers, no markdown, no explanation beyond what fits on that line:\n\nCOHERENT\nINVERSION_DETECTED — [max 15 words on what was inverted]\n\nFORBIDDEN: policy directives, decision matrices, scope analysis, rewrite plans, multiple paragraphs, headers, bullet points. If you write more than 15 words after COHERENT or INVERSION_DETECTED, you have failed this task.\n\nExample of correct output: INVERSION_DETECTED — original says system always halts, hypothesis says system should never halt\n\nExample of correct output: COHERENT`,
+  LP: (answer, l2) => `Claim: "${answer.slice(0,200)}"\nProposal: "${l2.slice(0,200)}"\n\nDoes Proposal say the OPPOSITE of Claim? Answer with just one word: YES or NO`,
 
   L3: (answer, l2, w)=> `Best path:\n${l2}\n\nWorld facts:\n${w}\n\nOriginal answer:\n${answer}\n\nYou are L3 — Rewrite Planner. Create a precise rewrite brief: (1) what stays, (2) what changes, (3) what gets added, (4) what gets removed.`,
   L4: (answer, l3, w)=> `ORIGINAL ANSWER:\n${answer}\n\nREWRITE PLAN:\n${l3}\n\nWORLD FACTS:\n${w}\n\nYou are L4 — Finalization Engine. Execute the rewrite plan. Produce the final improved answer. Optimize for clarity, structure, and correctness. Output only the improved answer.`,
@@ -988,11 +988,11 @@ export default function App() {
       }
 
       // LP — Policy Translation Layer: structural coherence gate
-      const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal, 100);
+      const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal, 5);
       if (signal.aborted) return;
-      if (lp.includes("INVERSION_DETECTED")) {
+      if (lp.trim().toUpperCase().startsWith("YES")) {
         setScoreAfter(s0);
-        setError("LP HALT — " + lp.replace("INVERSION_DETECTED — ", "") + " Pipeline stopped to prevent structural inversion.");
+        setError("LP HALT — proposed change inverts the original claim. Pipeline stopped to prevent structural inversion.");
         setRunning(false);
         return;
       }
@@ -1239,7 +1239,7 @@ export default function App() {
         <div style={{ background:"#06060f", border:"1px solid #0f0f1e", borderRadius:8, padding:20, marginBottom:48 }}>
           <div style={{ fontSize:9, color:"#444466", letterSpacing:"0.2em", marginBottom:12, display:"flex", justifyContent:"space-between" }}><span>LIVE PIPELINE · RUN #141</span><span style={{ color:"#10b981" }}>● ACTIVE</span></div>
           <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:14 }}>
-            {["L0","P","W","LX","LA","LC","L1","L2","L3","L4","LR","L6","L7","L8","L9","L10"].map(l=>(<div key={l} style={{ fontSize:9, fontWeight:700, padding:"3px 7px", borderRadius:4, background:"rgba(16,185,129,0.15)", border:"1px solid #10b981", color:"#10b981" }}>✓ {l}</div>))}
+            {["L0","P","W","LX","LA","LC","L1","L2","LP","L3","L4","LR","L6","L7","L8","L9","L10"].map(l=>(<div key={l} style={{ fontSize:9, fontWeight:700, padding:"3px 7px", borderRadius:4, background:"rgba(16,185,129,0.15)", border:"1px solid #10b981", color:"#10b981" }}>✓ {l}</div>))}
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:10, paddingTop:14, borderTop:"1px solid #0f0f1e" }}>
             <span style={{ fontFamily:"monospace", fontWeight:900, fontSize:28, color:"#f59e0b" }}>62</span>
