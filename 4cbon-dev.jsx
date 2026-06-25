@@ -978,11 +978,13 @@ export default function App() {
       if (signal.aborted) return;
       if (l2.includes("NO_REWRITE")) { setScoreAfter(s0); setError("HIGH QUALITY MODE: No improvement found. Original answer is stronger than any available rewrite. Your input is excellent."); setRunning(false); return; }
 
-      // GUARD — if L2 itself is truncated, don't ask LP to judge broken input
-      const l2Truncated = !l2 || l2.trim().length < 50 || /[a-zA-Z]—$|[a-zA-Z]:$|[a-zA-Z],$/.test(l2.trim().slice(-3));
-      if (l2Truncated) {
+      // GUARD — if L2 itself is truncated OR refusing/erroring, don't ask LP to judge broken input
+      const l2LooksTruncated = !l2 || l2.trim().length < 50 || /[a-zA-Z]—$|[a-zA-Z]:$|[a-zA-Z],$/.test(l2.trim().slice(-3));
+      const l2Refusing = /\bcannot\b|\bmalformed\b|\bblocked\b|\bhalt\b|\bI am receiving\b|\brefus/i.test(l2.slice(0, 300));
+      const l2Broken = l2LooksTruncated || l2Refusing;
+      if (l2Broken) {
         setScoreAfter(s0);
-        setError("UPSTREAM HALT — L2 output appears truncated or incomplete. Pipeline stopped before policy check to avoid evaluating broken input.");
+        setError("UPSTREAM HALT — L2 output is truncated, malformed, or refusing to evaluate. Pipeline stopped before policy check rather than evaluate broken input.");
         setRunning(false);
         return;
       }
