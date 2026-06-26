@@ -285,6 +285,27 @@ async function saveBeliefToSupabase(belief, scoreBefore, scoreAfter, runNumber) 
   } catch {}
 }
 
+// ═══════════════════════════════════════════════════════════
+// EVENT LOG — append-only, immutable runtime facts
+// Never edit a past event. If a correction is needed, log a
+// new event of type "correction" referencing the original.
+// ═══════════════════════════════════════════════════════════
+async function logEvent(eventType, details, runId) {
+  try {
+    await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        _action: "log_event",
+        eventType,        // e.g. "LP_FIRED", "L4_HALT", "UPSTREAM_TRUNCATION", "OPERATING_MODE_SELECTED", "RUN_OUTCOME"
+        details,           // plain object with whatever's relevant to that event
+        runId: runId || null,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+  } catch {}
+}
+
 async function saveQuestionsToSupabase(runId, questions) {
   const types = ["observation", "reasoning", "alignment"];
   for (let i = 0; i < questions.length; i++) {
@@ -959,6 +980,7 @@ export default function App() {
 
       // Determine operating mode based on input quality
       const operatingMode = s0 >= 68 ? "HIGH_QUALITY" : "STANDARD";
+      logEvent("OPERATING_MODE_SELECTED", { s0, operatingMode });
 
       const l0 = await runLayer("L0", LAYER_PROMPTS.L0(inputText, context, priorBeliefs, priorQuestions), signal);
       if (signal.aborted) return;
@@ -983,6 +1005,7 @@ export default function App() {
       const l2Refusing = /I cannot evaluate|I am receiving an incomplete|the input is malformed|execution status:\s*blocked|cannot proceed without|awaiting (complete|valid) input/i.test(l2.slice(0, 400));
       const l2Broken = l2LooksTruncated || l2Refusing;
       if (l2Broken) {
+        logEvent("UPSTREAM_TRUNCATION", { s0, reason: l2LooksTruncated ? "truncated" : "refusing", l2Preview: l2.slice(0, 150) });
         setScoreAfter(s0);
         setError("UPSTREAM HALT — L2 output is truncated, malformed, or refusing to evaluate. Pipeline stopped before policy check rather than evaluate broken input.");
         setRunning(false);
@@ -993,6 +1016,7 @@ export default function App() {
       const lp = await runLayer("LP", LAYER_PROMPTS.LP(inputText, l2), signal, 5);
       if (signal.aborted) return;
       if (lp.trim().toUpperCase().startsWith("YES")) {
+        logEvent("LP_FIRED", { s0, lpVerdict: lp.trim() });
         setScoreAfter(s0);
         setError("LP HALT — proposed change inverts the original claim. Pipeline stopped to prevent structural inversion.");
         setRunning(false);
@@ -1005,6 +1029,7 @@ export default function App() {
 
       const l4Failed = !l4 || l4.trim().length < 500 || l4.includes("EXECUTION_ABORTED");
       if (l4Failed) {
+        logEvent("L4_HALT", { s0, l4Length: l4 ? l4.trim().length : 0, reason: l4 && l4.includes("EXECUTION_ABORTED") ? "explicit_abort" : "too_short" });
         setScoreAfter(s0);
         setError("L4 HALT — Execution failed. Pipeline stopped. Downstream layers will not run on a failed execution.");
         setRunning(false);
@@ -1076,6 +1101,7 @@ export default function App() {
       saveIdentity(newIdent);
 
       // Show feedback box
+      logEvent("RUN_OUTCOME", { s0, s1, delta: s1 - s0, operatingMode, outcome: "completed" }, runId);
       setShowFeedback(true);
 
     } catch (e) {
