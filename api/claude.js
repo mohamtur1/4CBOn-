@@ -272,7 +272,12 @@ export default async function handler(req, res) {
     const body = req.body;
     const isStream = body.stream === true;
 
-    if (isStream) {
+    // Dev bypass — set DEV_BYPASS_KEY in Vercel env vars, and send the same
+    // value as devKey from the frontend to skip the daily run limit entirely.
+    // Never share this key publicly; it has no effect unless it matches exactly.
+    const devBypass = process.env.DEV_BYPASS_KEY && body.devKey === process.env.DEV_BYPASS_KEY;
+
+    if (isStream && !devBypass) {
       const ip = getIP(req);
       const { allowed, remaining } = await checkRunLimit(ip);
 
