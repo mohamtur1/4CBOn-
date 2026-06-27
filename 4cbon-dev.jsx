@@ -500,6 +500,7 @@ async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTo
       stream: true,
       system,
       messages: [{ role: "user", content: userPrompt.slice(0, 2000) }],
+      devKey: (typeof localStorage !== "undefined" && localStorage.getItem("4cbon_devkey")) || "",
     }),
   });
 
@@ -1354,6 +1355,16 @@ export default function App() {
                 {lastL9Questions.map((q, i) => <div key={i}>? {q}</div>)}
               </div>
             )}
+            <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid #1a1a2e" }}>
+              <div style={{ fontSize: 8, color: "#333", letterSpacing: "0.15em", marginBottom: 4 }}>DEV KEY (set once, saved locally)</div>
+              <input
+                type="password"
+                placeholder="paste dev key here"
+                defaultValue={(typeof localStorage !== "undefined" && localStorage.getItem("4cbon_devkey")) || ""}
+                onChange={e => { try { localStorage.setItem("4cbon_devkey", e.target.value); } catch {} }}
+                style={{ width: "100%", background: "#08080f", border: "1px solid #1a1a2e", borderRadius: 4, color: "#5a5a82", fontFamily: "monospace", fontSize: 10, padding: "6px 8px" }}
+              />
+            </div>
           </div>
         </div>
       )}
