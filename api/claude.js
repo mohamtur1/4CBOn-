@@ -25,7 +25,6 @@ const isAllowedOrigin = (o) => {
   return false;
 };
 
-// Safely get Supabase credentials
 function getCreds() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_KEY;
@@ -33,7 +32,6 @@ function getCreds() {
   return { url, key };
 }
 
-// Get the caller's IP address from Vercel headers
 function getIP(req) {
   return (
     req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
@@ -43,16 +41,13 @@ function getIP(req) {
   );
 }
 
-// Check if this IP has runs remaining today.
-// Returns { allowed: bool, remaining: number, used: number }
 async function checkRunLimit(ip) {
   const creds = getCreds();
   if (!creds) return { allowed: true, remaining: FREE_RUNS_PER_DAY, used: 0 };
 
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const today = new Date().toISOString().slice(0, 10);
 
   try {
-    // Look up today's count for this IP
     const res = await fetch(
       `${creds.url}/rest/v1/run_limits?ip=eq.${encodeURIComponent(ip)}&run_date=eq.${today}&select=run_count`,
       { headers: { "apikey": creds.key, "Authorization": `Bearer ${creds.key}` } }
@@ -65,13 +60,10 @@ async function checkRunLimit(ip) {
 
     return { allowed: used < FREE_RUNS_PER_DAY, remaining, used };
   } catch {
-    // If check fails, allow the run — don't punish users for infra issues
     return { allowed: true, remaining: FREE_RUNS_PER_DAY, used: 0 };
   }
 }
 
-// Increment the run count for this IP today.
-// Uses upsert so first run creates the row, subsequent runs increment it.
 async function incrementRunCount(ip) {
   const creds = getCreds();
   if (!creds) return;
@@ -79,7 +71,6 @@ async function incrementRunCount(ip) {
   const today = new Date().toISOString().slice(0, 10);
 
   try {
-    // Try to insert a new row first
     const insertRes = await fetch(`${creds.url}/rest/v1/run_limits`, {
       method: "POST",
       headers: {
@@ -91,7 +82,6 @@ async function incrementRunCount(ip) {
       body: JSON.stringify({ ip, run_date: today, run_count: 1 }),
     });
 
-    // If insert fails due to unique constraint (row exists), increment instead
     if (insertRes.status === 409 || insertRes.status === 400) {
       await fetch(
         `${creds.url}/rest/v1/run_limits?ip=eq.${encodeURIComponent(ip)}&run_date=eq.${today}`,
@@ -103,11 +93,10 @@ async function incrementRunCount(ip) {
             "Authorization": `Bearer ${creds.key}`,
             "Prefer": "return=minimal",
           },
-          body: JSON.stringify({ run_count: 999 }), // will be overridden by SQL below
+          body: JSON.stringify({ run_count: 999 }),
         }
       );
 
-      // Use SQL to do atomic increment
       await fetch(`${creds.url}/rest/v1/rpc/increment_run_count`, {
         method: "POST",
         headers: {
@@ -118,7 +107,7 @@ async function incrementRunCount(ip) {
         body: JSON.stringify({ p_ip: ip, p_date: today }),
       }).catch(() => {});
     }
-  } catch {} // fail silently — don't break the pipeline over counter issues
+  } catch {}
 }
 
 export default async function handler(req, res) {
@@ -147,10 +136,6 @@ export default async function handler(req, res) {
   }
 
   const action = req.body && req.body._action;
-
-  // ─────────────────────────────────────────────────────────
-  // SUPABASE ACTION HANDLERS — always return 200
-  // ─────────────────────────────────────────────────────────
 
   if (action === "save_belief") {
     const creds = getCreds();
@@ -252,7 +237,6 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Check run limit status without incrementing (for UI display)
   if (action === "get_run_status") {
     const ip = getIP(req);
     const status = await checkRunLimit(ip);
@@ -260,11 +244,24 @@ export default async function handler(req, res) {
     return;
   }
 
-  // ─────────────────────────────────────────────────────────
-  // ANTHROPIC API FORWARDING
-  // Streaming calls (layer execution) are gated.
-  // Non-streaming calls (scorer, L9) are not gated.
-  // ─────────────────────────────────────────────────────────
+  // Append-only event log — runtime facts, never edited after insert.
+  // Used to track LP fires, L4 halts, upstream truncations, operating mode
+  // selection, and run outcomes — real evidence instead of relying on memory.
+  if (action === "log_event") {
+    const creds = getCreds();
+    if (!creds) { res.status(200).json({ logged: false }); return; }
+    const { eventType, details, runId } = req.body;
+    try {
+      await fetch(`${creds.url}/rest/v1/event_log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": creds.key, "Authorization": `Bearer ${creds.key}`, "Prefer": "return=minimal" },
+        body: JSON.stringify({ event_type: eventType, details: details || {}, run_id: runId || null }),
+      });
+      res.status(200).json({ logged: true });
+    } catch { res.status(200).json({ logged: false }); }
+    return;
+  }
+
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -275,16 +272,11 @@ export default async function handler(req, res) {
     const body = req.body;
     const isStream = body.stream === true;
 
-    // ── FREEMIUM GATE ──
-    // Only gate streaming calls — these are the actual pipeline layer runs.
-    // Scorer calls and L9 (non-streaming) are not gated because they're
-    // internal to a run that was already gated at L0.
     if (isStream) {
       const ip = getIP(req);
       const { allowed, remaining } = await checkRunLimit(ip);
 
       if (!allowed) {
-        // Return a special error that the frontend recognises as the run limit
         res.status(429).json({
           error: "daily_limit_reached",
           message: `You've used your ${FREE_RUNS_PER_DAY} free runs for today. Upgrade to Pro for unlimited access.`,
@@ -293,7 +285,6 @@ export default async function handler(req, res) {
         return;
       }
 
-      // Increment before the run so concurrent requests can't cheat the gate
       await incrementRunCount(ip);
     }
 
