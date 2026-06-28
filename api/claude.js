@@ -300,7 +300,7 @@ export default async function handler(req, res) {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, devKey: undefined }),
     });
 
     if (isStream) {
