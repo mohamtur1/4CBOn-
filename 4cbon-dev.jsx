@@ -193,12 +193,12 @@ const LAYER_PROMPTS = {
   LC: (answer, la) => `AI ANSWER:\n${answer}\n\nADVERSARIAL FINDINGS:\n${la}\n\nYou are LC — Compression Integrity Layer. LLMs compress aggressively. Compression silently destroys distinctions. Your job is to find where compression happened and restore what was lost.\n\nHunt for:\n1. CONCEPT COLLAPSE: Where did multiple distinct concepts get merged into one term? Name both concepts separately.\n2. METAPHOR SUBSTITUTION: Where did a metaphor replace a mechanism? Name the mechanism that was hidden.\n3. ELEGANCE ERASURE: Where did clean phrasing delete important uncertainty or caveats?\n4. ABSTRACTION HIDING CAUSALITY: Where did a high-level term hide a specific causal claim that needs scrutiny?\n\nFor each instance found: name the compressed term, name what was lost, and state what the uncompressed version would say.\n\nIf no compression is detected, say so explicitly.`,
 
   L1: (answer, p, w, lx, la, lc) => `AI ANSWER:\n${answer}\n\nParsing:\n${p}\n\nWorld Model:\n${w}\n\nReality Audit (LX):\n${lx}\n\nAdversarial Findings (LA):\n${la}\n\nCompression Audit (LC):\n${lc}\n\nYou are L1 — Hypothesis Engine. Generate exactly 3 improvement hypotheses informed by ALL upstream layers above:\nH1: [strongest improvement path — grounded in what LX and LA revealed]\nH2: [radical reframe — does the framing itself collapse under adversarial pressure?]\nH3: [failure mode — what compressed assumption or ungrounded claim will cause this to fail?]`,
-  L2: (l1, s0, mode) => {
+  L2: (l1, s0, mode, answer) => {
     const base = `Hypotheses:\n${l1}\n\nInput score: ${s0}/100\n\n`;
     if (mode === "HIGH_QUALITY") {
-      return base + `You are L2 — Evaluation Layer in HIGH QUALITY SCRUTINY MODE. This input already scores ${s0}/100. Do NOT fix obvious problems. Score each hypothesis only if it: (1) surfaces a hidden assumption, (2) identifies a failure case, (3) exposes a term doing too much epistemic work, or (4) adds genuine precision. If no hypothesis clears this bar, output exactly: NO_REWRITE and nothing else. Otherwise pick the best hypothesis, explain why in 2 sentences.`;
+      return base + `This input already scores ${s0}/100 — it is strong. Read the three hypotheses above. Does ANY of them surface a hidden assumption, identify a real failure case, or add genuine precision the original lacks?\n\nIf NONE do, respond with exactly: NO_REWRITE\nIf ONE does, respond with exactly: PROCEED: [number] — [reason, max 15 words]\n\nDo not write a table. Do not score each hypothesis individually. Do not write headers. One line only.`;
     }
-    return base + `You are L2 — Evaluation Layer. Score each hypothesis 1-10. Pick the best path. Explain your reasoning in 3 sentences.`;
+    return `ORIGINAL ANSWER:\n${(answer || "").slice(0, 500)}\n\n${base}You are L2 — Evaluation Layer.\n\nSTEP 1 — TASK INFERENCE (do this first, before scoring anything):\nState your best read of:\nApparent audience: [who is this for]\nApparent task: [overview / teaching / technical reference / expert discussion]\nExpected depth: [level of detail that fits]\nConfidence: [High / Medium / Low]\n\nSTEP 2 — SCORE EACH HYPOTHESIS on four dimensions, not just correctness:\n- Correctness: is the claim true?\n- Audience Fit: does this match the apparent audience from Step 1, or does it overshoot/undershoot it?\n- Complexity Cost: how much added cognitive load does this introduce?\n- Net Utility: does benefit outweigh complexity cost for THIS task specifically? A correct, high-impact addition that overshoots audience fit should score LOW net utility, not high.\n\nSTEP 3 — DECISION STATE (pick exactly one):\nPROCEED — confidence is high and at least one hypothesis has positive net utility. Name it and explain in 2 sentences.\nPRESERVE — confidence is low, or all hypotheses have negative net utility relative to apparent task. Recommend minimal or no rewrite, explain why in 2 sentences.\nESCALATE — task or audience is genuinely ambiguous, confidence is very low. Flag for conservative rewrite, explain why in 2 sentences.\n\nBe concise. This is judgment under uncertainty, not a contradiction check — PRESERVE and ESCALATE are normal, healthy outcomes, not failures.`;
   },
   LP: (answer, l2) => `Claim: "${answer.slice(0,200)}"\nProposal: "${l2.slice(0,200)}"\n\nDoes Proposal say the OPPOSITE of Claim? Answer with just one word: YES or NO`,
 
@@ -211,8 +211,8 @@ const LAYER_PROMPTS = {
   L10: (l4, lr, l7, l8, l9qs, s0, s1) => `PIPELINE RUN SUMMARY:
 Score: ${s0} → ${s1}
 
-L4 FINAL REWRITE (first 600 chars):
-${l4.slice(0, 600)}
+L4 FINAL REWRITE (full text — this is the actual deliverable; audit it in full; do not assume truncation unless there is genuinely no closing punctuation):
+${l4}
 
 LR REGRET ANALYSIS (first 400 chars):
 ${lr.slice(0, 400)}
@@ -487,8 +487,8 @@ async function scoreWithClaude(text, originalScore = null) {
 // ═══════════════════════════════════════════════════════════
 // STREAMING API CALL
 // ═══════════════════════════════════════════════════════════
-async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTokens = 800) {
-  const system = `${RUNTIME_SPEC}\n\nYOU ARE NOW EXECUTING: ${layerId} — ${layerName}\nStay in this layer only. Be concise and precise.`;
+async function callClaude(layerId, layerName, userPrompt, onChunk, signal, maxTokens = 800, modeOverride = "") {
+  const system = `${RUNTIME_SPEC}\n\nYOU ARE NOW EXECUTING: ${layerId} — ${layerName}\nStay in this layer only. Be concise and precise.${modeOverride ? `\n\nOVERRIDE: Disregard the brief one-line description of this layer above in the spec. For THIS run only, follow the detailed instructions given in the user message below exactly — including any mode-specific scrutiny requirements. The user message is authoritative for this run.` : ""}`;
 
   const res = await fetch(API_ENDPOINT, {
     method: "POST",
@@ -926,13 +926,13 @@ export default function App() {
     setStreaming(prev => prev === id ? null : prev);
   };
 
-  const runLayer = async (layerId, prompt, signal, maxTokens = 800) => {
+  const runLayer = async (layerId, prompt, signal, maxTokens = 800, modeOverride = "") => {
     const layer = LAYERS.find(l => l.id === layerId);
     setActive(layerId); setStreaming(layerId);
     let result = "";
     await callClaude(layerId, layer.name, prompt, (text) => {
       result = text; setLayerOutput(layerId, text);
-    }, signal, maxTokens);
+    }, signal, maxTokens, modeOverride);
     markDone(layerId);
     return result;
   };
@@ -997,9 +997,23 @@ export default function App() {
       const lcSummary = lc.slice(0, 600);
 
       const l1 = await runLayer("L1", LAYER_PROMPTS.L1(inputText, p, w, lxSummary, laSummary, lcSummary), signal); if (signal.aborted) return;
-      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0, operatingMode), signal);
+      const l2 = await runLayer("L2", LAYER_PROMPTS.L2(l1, s0, operatingMode, inputText), signal, operatingMode === "HIGH_QUALITY" ? 50 : 800, operatingMode === "HIGH_QUALITY" ? "HIGH_QUALITY" : "");
       if (signal.aborted) return;
       if (l2.includes("NO_REWRITE")) { setScoreAfter(s0); setError("HIGH QUALITY MODE: No improvement found. Original answer is stronger than any available rewrite. Your input is excellent."); setRunning(false); return; }
+      if (operatingMode !== "HIGH_QUALITY" && /PRESERVE/.test(l2)) {
+        logEvent("L2_PRESERVE", { s0 });
+        setScoreAfter(s0);
+        setError("L2 PRESERVE — Low confidence in audience fit, or proposed changes don't clearly help this task. Recommending minimal rewrite. This is a healthy outcome, not a failure.");
+        setRunning(false);
+        return;
+      }
+      if (operatingMode !== "HIGH_QUALITY" && /ESCALATE/.test(l2)) {
+        logEvent("L2_ESCALATE", { s0 });
+        setScoreAfter(s0);
+        setError("L2 ESCALATE — Task or audience is genuinely ambiguous. Flagging for human review rather than guessing. This is a healthy outcome, not a failure.");
+        setRunning(false);
+        return;
+      }
 
       // GUARD — if L2 itself is truncated OR refusing/erroring, don't ask LP to judge broken input
       const l2LooksTruncated = !l2 || l2.trim().length < 50 || /[a-zA-Z]—$|[a-zA-Z]:$|[a-zA-Z],$/.test(l2.trim().slice(-3));
